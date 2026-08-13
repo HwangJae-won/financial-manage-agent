@@ -38,6 +38,7 @@ from core.formatting import fmt_krw, fmt_months, fmt_pct, fmt_years
 from core.models import RiskTolerance, UserProfile
 from core.montecarlo import run_monte_carlo
 from core.policy import PolicyImpact, analyze_policy_impact
+from core.prescribe import PrescriptionSet, prescribe
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
 from core.scenarios import build_scenarios, comparison_table
@@ -559,6 +560,32 @@ def render_scenarios(scenarios) -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def render_prescriptions(profile: UserProfile) -> None:
+    """진단 다음에 오는 것 — 그래서 무엇을 하면 되는가."""
+    st.subheader("그래서 무엇을 하면 되나")
+
+    target_age = st.select_slider(
+        "목표 나이", options=[85, 90, 95, 100], value=95,
+        help="이 나이까지 금융자산이 유지되는 것을 목표로 계산합니다.",
+    )
+    plan: PrescriptionSet = prescribe(profile, target_age=target_age)
+
+    (st.success if plan.already_safe else st.warning)(plan.summary)
+
+    for option in plan.options:
+        mark = "✅" if option.feasible else ("🟠" if option.improves else "⬜")
+        with st.expander(f"{mark} {option.label}", expanded=option.feasible):
+            st.markdown(f"**{option.headline}**")
+            if option.change_label:
+                st.info(f"**해야 할 일** — {option.change_label}")
+            if option.gained_years > 0:
+                st.caption(f"자산이 버티는 기간이 {option.gained_years}년 늘어납니다.")
+            if option.detail:
+                st.caption(option.detail)
+            if option.caution:
+                st.warning(f"⚠️ {option.caution}")
+
+
 def render_policy_impact(profile: UserProfile) -> None:
     """발표된 제도 변화가 이 사람에게 실제로 얼마인지 (기능 ④·⑧)."""
     impact: PolicyImpact = analyze_policy_impact(profile)
@@ -652,6 +679,8 @@ def main() -> None:
     render_risk_score(score)
     st.divider()
     render_scenarios(scenarios)
+    st.divider()
+    render_prescriptions(profile)
     st.divider()
     render_policy_impact(profile)
 

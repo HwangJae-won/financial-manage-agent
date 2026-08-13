@@ -46,6 +46,11 @@ class PensionAssumption(BaseModel):
     start_age_schedule: list[PensionStartAgeBand]
     indexed_to_inflation: bool = True
 
+    # 수급 시기 조정. 기본값을 둔 이유는 이 항목이 없는 예전 YAML 도 계속 읽히게 하려는 것이다.
+    deferral_rate_per_year: float = Field(default=0.072, ge=0.0)
+    early_rate_per_year: float = Field(default=0.060, ge=0.0)
+    max_adjust_years: int = Field(default=5, ge=0)
+
 
 class AssetMapAssumption(BaseModel):
     survival_months: int
@@ -91,6 +96,31 @@ class Assumptions(BaseModel):
         if not applicable:
             raise ValueError(f"수급 개시 연령을 결정할 수 없습니다: birth_year={birth_year}")
         return max(applicable)
+
+    def pension_start_age_range(self, birth_year: int) -> tuple[int, int]:
+        """선택 가능한 수급 개시 연령 구간 (조기 최대 ~ 연기 최대)."""
+        normal = self.national_pension_start_age(birth_year)
+        span = self.pension.max_adjust_years
+        return normal - span, normal + span
+
+    def pension_amount_factor(self, birth_year: int, start_age: int) -> float:
+        """수급 시기를 조정했을 때 월 수령액에 곱할 계수.
+
+        법정 개시연령에 받으면 1.0. 미루면 연 7.2% 가산, 앞당기면 연 6% 감액이며
+        양쪽 모두 최대 5년까지다. 조정 한도를 넘겨 요청해도 한도까지만 반영한다 —
+        입력이 잘못되었다고 계산을 멈추는 것보다, 제도상 가능한 범위로 잘라서
+        계산하고 그 사실을 화면에서 말하는 편이 낫다.
+
+        소득공백기(퇴직~수급 개시)는 이 계수와 별개로 core/schedule.py 가 처리한다.
+        여기서는 '얼마를 받느냐'만 정한다.
+        """
+        normal = self.national_pension_start_age(birth_year)
+        span = self.pension.max_adjust_years
+        delta = max(-span, min(span, start_age - normal))
+
+        if delta >= 0:
+            return 1.0 + delta * self.pension.deferral_rate_per_year
+        return max(0.0, 1.0 + delta * self.pension.early_rate_per_year)
 
 
 @functools.lru_cache(maxsize=4)

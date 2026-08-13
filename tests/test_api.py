@@ -303,3 +303,48 @@ def test_unknown_policy_key_is_a_404(client):
         "/api/policy-impact", json={"sample": "demo", "policy_key": "없는정책"}
     )
     assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# 처방 — "그래서 무엇을 하면 되나"
+# --------------------------------------------------------------------------- #
+
+
+def test_prescriptions_answer_the_demo_persona(client, finished_session):
+    body = client.post(
+        "/api/prescriptions", json={"session_id": finished_session}
+    ).json()
+
+    assert body["baseline_depletion_age"] == 69
+    assert body["already_safe"] is False
+    assert body["options"]
+
+    expense = next(o for o in body["options"] if o["lever"] == "expense")
+    assert expense["feasible"]
+    assert expense["required_value"] < expense["current_value"]
+    assert expense["required_value"] % 10_000 == 0  # 만원 단위로 답한다
+
+
+def test_prescriptions_respect_the_target_age(client):
+    strict = client.post(
+        "/api/prescriptions", json={"sample": "demo", "target_age": 95}
+    ).json()
+    relaxed = client.post(
+        "/api/prescriptions", json={"sample": "demo", "target_age": 85}
+    ).json()
+
+    def required_expense(body):
+        return next(o for o in body["options"] if o["lever"] == "expense")["required_value"]
+
+    assert required_expense(relaxed) > required_expense(strict)
+
+
+def test_prescriptions_without_a_profile_is_a_400(client):
+    assert client.post("/api/prescriptions", json={}).status_code == 400
+
+
+def test_prescriptions_reject_an_absurd_target_age(client):
+    response = client.post(
+        "/api/prescriptions", json={"sample": "demo", "target_age": 200}
+    )
+    assert response.status_code == 422

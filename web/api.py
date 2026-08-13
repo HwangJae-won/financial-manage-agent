@@ -31,6 +31,7 @@ from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_years
 from core.models import SimulationResult, UserProfile
 from core.montecarlo import MonteCarloResult, run_monte_carlo
+from core.prescribe import PrescriptionSet, prescribe
 from core.policy import (
     DEFAULT_POLICY_KEY,
     PolicyFact,
@@ -131,6 +132,17 @@ class FraudRequest(BaseModel):
     session_id: Optional[str] = Field(
         default=None, description="있으면 사용자 보유 자산과 엮어 설명한다"
     )
+
+
+class PrescriptionRequest(BaseModel):
+    """처방 요청. 프로파일을 찾는 규칙은 정책 영향 요청과 같다."""
+
+    target_age: Optional[int] = Field(
+        default=None, ge=60, le=110, description="목표 나이. 생략하면 시뮬레이션 종료 나이"
+    )
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
 
 
 class PolicyImpactRequest(BaseModel):
@@ -287,6 +299,36 @@ def get_sample(key: str) -> UserProfile:
     return samples[key]
 
 
+def _resolve_profile(
+    profile: Optional[UserProfile], session_id: Optional[str], sample: Optional[str]
+) -> UserProfile:
+    """직접 입력 / 대화 세션 / 예시 인물 — 어느 경로로 들어와도 같은 답을 준다."""
+    if profile is not None:
+        return profile
+
+    if session_id:
+        agent = _SESSIONS.get(session_id)
+        if agent is not None:
+            try:
+                return agent.build_profile()
+            except ValueError:
+                pass  # 프로파일이 아직 완성되지 않았으면 다음 경로로 넘어간다
+
+    if sample:
+        samples = {"demo": DEMO_PROFILE, "diversified": DIVERSIFIED_PROFILE}
+        if sample in samples:
+            return samples[sample]
+
+    raise HTTPException(400, "먼저 상담을 마치시거나 예시 인물을 선택해 주세요.")
+
+
+@app.post("/api/prescriptions", response_model=PrescriptionSet)
+def prescriptions(request: PrescriptionRequest) -> PrescriptionSet:
+    """목표 나이까지 유지하려면 무엇을 얼마나 바꿔야 하는지 (기능 ⑤ 확장)."""
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return prescribe(profile, target_age=request.target_age)
+
+
 @app.get("/api/policies", response_model=list[PolicyFact])
 def policies() -> list[PolicyFact]:
     """정책 팩트시트 목록.
@@ -300,25 +342,7 @@ def policies() -> list[PolicyFact]:
 @app.post("/api/policy-impact", response_model=PolicyImpact)
 def policy_impact(request: PolicyImpactRequest) -> PolicyImpact:
     """정책 한 건이 이 사용자의 은퇴 계획에 미치는 영향을 계산한다 (기능 ④)."""
-    profile = request.profile
-
-    if profile is None and request.session_id:
-        agent = _SESSIONS.get(request.session_id)
-        if agent is not None:
-            try:
-                profile = agent.build_profile()
-            except ValueError:
-                profile = None
-
-    if profile is None and request.sample:
-        samples = {"demo": DEMO_PROFILE, "diversified": DIVERSIFIED_PROFILE}
-        profile = samples.get(request.sample)
-
-    if profile is None:
-        raise HTTPException(
-            400, "먼저 상담을 마치시거나 예시 인물을 선택해 주세요."
-        )
-
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
     try:
         return analyze_policy_impact(profile, policy_key=request.policy_key)
     except KeyError as exc:

@@ -76,6 +76,12 @@ def build_schedule(
     inflation = assumptions.macro.inflation_rate
     pension_indexed = assumptions.pension.indexed_to_inflation
 
+    # 법정 개시연령보다 미루면 가산, 앞당기면 감액된 금액을 평생 받는다.
+    # 프로파일이 법정 연령 그대로면 1.0 이라 기존 결과는 바뀌지 않는다.
+    pension_factor = assumptions.pension_amount_factor(
+        profile.birth_year, profile.national_pension_start_age
+    )
+
     start_year = profile.retirement_year
     end_year = profile.birth_year + assumptions.macro.horizon_age
 
@@ -86,10 +92,11 @@ def build_schedule(
         inflation_factor = (1.0 + inflation) ** year_index
 
         if include_income:
-            pension_factor = inflation_factor if pension_indexed else 1.0
+            indexation = inflation_factor if pension_indexed else 1.0
             pension_income = (
                 profile.national_pension_monthly
                 * pension_factor
+                * indexation
                 * _pension_months(year, profile)
             )
             # 기타소득(임대·근로)은 물가에 연동하지 않는다 — 보수적 가정.

@@ -246,6 +246,7 @@ function renderAnalysis(data) {
   renderBalanceChart(data.simulation);
   renderRiskScore(data.risk_score);
   renderScenarios(data.scenarios, data.monte_carlo);
+  loadPrescriptions();
 }
 
 function renderBriefing(briefing) {
@@ -530,6 +531,62 @@ function volatilityLabel(volatility) {
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
+/* 처방 — "그래서 무엇을 하면 되나"                                      */
+/* ------------------------------------------------------------------ */
+
+async function loadPrescriptions() {
+  const box = $("#prescriptions");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  box.textContent = "계산 중입니다...";
+  try {
+    renderPrescriptions(
+      await api("/api/prescriptions", {
+        method: "POST",
+        body: JSON.stringify({
+          profile,
+          target_age: Number($("#target-age").value),
+        }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderPrescriptions(plan) {
+  const box = $("#prescriptions");
+  box.innerHTML = "";
+
+  box.appendChild(
+    el("div", `alert ${plan.already_safe ? "alert-ok" : "alert-warn"}`, plan.summary),
+  );
+
+  plan.options.forEach((option) => {
+    // 색이 아니라 아이콘과 글자로 구분한다 (시니어 접근성).
+    const mark = option.feasible ? "✅" : option.improves ? "🟠" : "⬜";
+    const card = el("div", `signal ${option.feasible ? "" : "high"}`);
+
+    card.appendChild(el("div", "signal-title", `${mark} ${option.label}`));
+    card.appendChild(el("p", null, option.headline));
+
+    if (option.change_label) {
+      card.appendChild(el("div", "advice", `해야 할 일 — ${option.change_label}`));
+    }
+    if (option.gained_years > 0) {
+      card.appendChild(
+        el("div", "evidence", `자산이 버티는 기간이 ${option.gained_years}년 늘어납니다.`),
+      );
+    }
+    if (option.detail) card.appendChild(el("p", "hint", option.detail));
+    if (option.caution) card.appendChild(el("div", "alert alert-warn", `⚠️ ${option.caution}`));
+
+    box.appendChild(card);
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* 제도 변화 (기능 ④·⑧)                                                */
 /* ------------------------------------------------------------------ */
 
@@ -757,6 +814,7 @@ async function init() {
   setupChat();
   setupPolicy();
   setupFraud();
+  $("#target-age").addEventListener("change", loadPrescriptions);
   loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>

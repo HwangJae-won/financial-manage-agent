@@ -107,6 +107,7 @@ def test_all_sections_are_present(form_app):
         "자산이 남아있을 확률",
         "은퇴 재무 안정도",
         "대응 시나리오 비교",
+        "그래서 무엇을 하면 되나",
         "제도가 바뀌면 나는 얼마나 달라지나",
     ]:
         assert section in headings
