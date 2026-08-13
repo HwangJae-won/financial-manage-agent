@@ -28,6 +28,7 @@ import streamlit as st
 
 from agents.config import describe as describe_llm
 from agents.explain import Briefing, explain
+from agents.fraud import RiskLevel, Severity, analyze_message
 from agents.llm import MockClient, get_client
 from agents.mocks import demo_handler
 from agents.profiling import ProfilingAgent
@@ -239,6 +240,89 @@ def render_conversation() -> UserProfile | None:
     except ValueError as exc:
         st.error(str(exc))
         return None
+
+
+SAMPLE_SCAM = """[특별안내] 고객님만 드리는 기회입니다.
+정부 세법이 바뀌면서 ISA 비과세 혜택이 곧 폐지됩니다.
+지금 갈아타지 않으시면 손해입니다.
+원금 보장되면서 월 3% 확정 수익 나오는 상품이고요,
+오늘까지만 선착순으로 받습니다.
+자세한 내용은 텔레그램으로 연락 주세요. 가족한테는 비밀로 해주세요."""
+
+RISK_STYLE = {
+    RiskLevel.HIGH: ("🔴", st.error),
+    RiskLevel.CAUTION: ("🟠", st.warning),
+    RiskLevel.LOW: ("🟢", st.success),
+}
+
+
+def render_fraud_check() -> None:
+    """받은 문자·카톡을 붙여넣어 위험 신호를 확인한다 (기능 ⑦)."""
+    st.subheader("받은 연락 확인하기")
+    st.markdown(
+        "투자를 권유하는 문자나 카카오톡을 받으셨나요? "
+        "**내용을 그대로 붙여넣으시면** 확인이 필요한 부분을 짚어드립니다."
+    )
+
+    if st.button("예시 문자로 확인해보기"):
+        st.session_state.fraud_text = SAMPLE_SCAM
+
+    text = st.text_area(
+        "받으신 내용",
+        value=st.session_state.get("fraud_text", ""),
+        height=180,
+        placeholder="받으신 문자나 메시지를 그대로 붙여넣어 주세요.",
+    )
+
+    if not text.strip():
+        st.info(
+            "붙여넣기가 어려우시면 내용을 직접 입력하셔도 됩니다. "
+            "위의 '예시 문자로 확인해보기'를 눌러 어떻게 동작하는지 먼저 보셔도 좋습니다."
+        )
+        return
+
+    profile = st.session_state.get("profile_for_fraud")
+    result = analyze_message(text, profile=profile)
+
+    icon, banner = RISK_STYLE[result.risk_level]
+    banner(f"{icon} **{result.risk_level.value}** — {result.summary}")
+
+    if result.signals:
+        st.markdown("#### 확인이 필요한 부분")
+        for signal in result.signals:
+            mark = "🔴" if signal.severity is Severity.HIGH else "🟠"
+            with st.expander(f"{mark} {signal.label}", expanded=signal.severity is Severity.HIGH):
+                if signal.evidence:
+                    st.caption("걸린 표현: " + ", ".join(f"`{e}`" for e in signal.evidence))
+                st.markdown(signal.why)
+                st.info(f"**이렇게 하세요** — {signal.advice}")
+
+    if result.policy_checks:
+        st.markdown("#### 언급된 제도의 실제 상태")
+        st.caption(
+            "뉴스는 '발표'와 '시행'을 구분하지 않습니다. "
+            "발표된 개편안은 국회 논의에서 바뀌거나 무산될 수 있습니다."
+        )
+        for check in result.policy_checks:
+            badge = "✅ 시행 중" if check.is_confirmed else f"⚠️ {check.status} (미확정)"
+            with st.expander(f"{badge} · {check.title}"):
+                st.markdown(check.summary)
+                st.warning(check.caution)
+                st.caption(
+                    f"출처: {check.source}"
+                    + (f" / 시행일 {check.effective_date}" if check.effective_date else "")
+                )
+
+    if result.profile_notes:
+        st.markdown("#### 고객님 자산과의 관계")
+        for note in result.profile_notes:
+            st.markdown(f"- {note}")
+
+    st.caption(
+        "⚠️ 이 확인은 사기 여부를 확정하지 않습니다. 확인이 필요한 신호를 알려드릴 뿐입니다. "
+        "신호가 없어도 안전이 보장되지 않으며, 가입 전에는 반드시 거래하시는 금융회사에 "
+        "직접 문의하세요. 금융감독원 파인(fine.fss.or.kr)에서 제도권 금융회사인지 조회하실 수 있습니다."
+    )
 
 
 def render_briefing(briefing: Briefing) -> None:
@@ -483,8 +567,8 @@ def main() -> None:
     st.markdown("**퇴직 후, 내 자산 어떻게 관리해야 할까요?**")
 
     mode = st.sidebar.radio(
-        "입력 방식",
-        ["대화로 알아보기", "직접 입력"],
+        "무엇을 하시겠어요?",
+        ["대화로 알아보기", "직접 입력", "받은 연락 확인하기"],
         help="대화가 막히면 언제든 직접 입력으로 바꾸실 수 있습니다.",
     )
     n_paths = st.sidebar.select_slider(
@@ -495,6 +579,10 @@ def main() -> None:
     if "대체됨" in status or "확인 필요" in status:
         st.sidebar.warning("LLM 설정에 문제가 있어 기본 응답으로 동작합니다. .env 를 확인해 주세요.")
 
+    if mode == "받은 연락 확인하기":
+        render_fraud_check()
+        return
+
     if mode == "대화로 알아보기":
         profile = render_conversation()
         if profile is None:
@@ -503,6 +591,7 @@ def main() -> None:
     else:
         profile = profile_form()
 
+    st.session_state.profile_for_fraud = profile
     sim, amap, mc, score, scenarios = analyze(profile.model_dump_json(), n_paths)
 
     if mode == "대화로 알아보기":

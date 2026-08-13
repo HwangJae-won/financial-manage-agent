@@ -209,3 +209,70 @@ def test_chat_placeholder_gives_an_example_answer():
     """시니어 사용자에게는 어떻게 답해야 할지 예시가 필요하다."""
     at = _fresh()
     assert "1966년생" in at.chat_input[0].placeholder
+
+
+# --------------------------------------------------------------------------- #
+# 받은 연락 확인 (기능 ⑦)
+# --------------------------------------------------------------------------- #
+
+
+def _fraud_mode() -> "AppTest":
+    at = _fresh()
+    at.radio[0].set_value("받은 연락 확인하기").run()
+    return at
+
+
+def test_fraud_mode_runs_without_exception():
+    at = _fraud_mode()
+    assert not at.exception, at.exception
+    headings = " ".join(h.value for h in at.subheader)
+    assert "받은 연락 확인하기" in headings
+
+
+def test_fraud_mode_starts_empty_with_guidance():
+    """붙여넣기가 어려운 시니어를 위한 안내가 있어야 한다."""
+    at = _fraud_mode()
+    infos = " ".join(i.value for i in at.info)
+    assert "직접 입력하셔도" in infos
+
+
+def test_sample_scam_button_fills_and_flags():
+    at = _fraud_mode()
+    at.button[0].click().run()
+
+    assert not at.exception
+    errors = " ".join(e.value for e in at.error)
+    assert "위험" in errors
+    assert "확정되지 않은" in errors  # 미확정 제도 경고
+
+
+def test_scam_analysis_shows_evidence_and_policy_status():
+    at = _fraud_mode()
+    at.text_area[0].set_value(
+        "정부 세법이 바뀌어 ISA 비과세가 폐지됩니다. 원금 보장에 월 3% 확정 수익, "
+        "오늘까지 선착순입니다. 텔레그램으로 연락 주세요."
+    ).run()
+
+    assert not at.exception
+    body = " ".join(m.value for m in at.markdown)
+    assert "확인이 필요한 부분" in body
+    assert "언급된 제도의 실제 상태" in body
+
+
+def test_legitimate_message_is_not_alarmed():
+    at = _fraud_mode()
+    at.text_area[0].set_value(
+        "안녕하세요, ○○은행입니다. 정기예금 연 3.2% 안내드립니다. "
+        "예금자보호법에 따라 5,000만원까지 보호됩니다."
+    ).run()
+
+    assert not at.exception
+    assert not at.error  # 정상 안내를 빨간 경고로 띄우면 안 된다
+
+
+def test_fraud_disclaimer_is_shown():
+    at = _fraud_mode()
+    at.text_area[0].set_value("원금 보장 고수익 상품입니다").run()
+    captions = " ".join(c.value for c in at.caption)
+    assert "사기 여부를 확정하지 않습니다" in captions
+    assert "fine.fss.or.kr" in captions
