@@ -56,6 +56,22 @@ class Allocation(BaseModel):
         return {"cash": self.cash, "bond": self.bond, "equity": self.equity}
 
 
+class LifeEvent(BaseModel):
+    """예정된 일회성 큰 지출.
+
+    이 연령대의 계획을 실제로 무너뜨리는 것은 매달의 생활비가 아니라 **한 번에 나가는
+    큰돈**이다. 자녀 결혼자금, 목돈 의료비, 주택 수리. 매년 일정한 생활비만 가정하면
+    "그래서 결혼자금 5천만원은 어디에 반영됐나요"라는 질문에 답할 수 없다.
+
+    금액은 **퇴직 시점 기준**으로 본다. 월 생활비와 같은 규약이라, 발생 연도까지
+    물가상승률만큼 커진다(보수적).
+    """
+
+    year: int = Field(description="지출이 발생하는 연도")
+    amount: int = Field(gt=0, description="퇴직 시점 기준 금액(원)")
+    label: str = Field(default="큰 지출", description="자녀 결혼자금 등 화면에 쓸 이름")
+
+
 class UserProfile(BaseModel):
     """AI 금융 프로파일링(기능 ①)의 산출물이자 모든 계산의 입력."""
 
@@ -86,6 +102,12 @@ class UserProfile(BaseModel):
     # --- 국민연금 ---
     national_pension_monthly: int = Field(default=0, ge=0, description="국민연금 예상 월 수령액")
     national_pension_start_age: int = Field(default=63, ge=55, le=75, description="국민연금 수령 개시 연령")
+
+    # --- 예정된 큰 지출 ---
+    life_events: list[LifeEvent] = Field(
+        default_factory=list,
+        description="자녀 결혼자금·의료비 등 일회성 큰 지출. 비어 있으면 기존 계산과 동일하다.",
+    )
 
     # --- 메타 ---
     assumed_fields: list[str] = Field(
@@ -177,6 +199,7 @@ class YearRow(BaseModel):
     pension_income: int
     other_income: int
     expense: int
+    event_expense: int = Field(default=0, description="그 해의 일회성 큰 지출")
     tax: int
     end_balance: int
 

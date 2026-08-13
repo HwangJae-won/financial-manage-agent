@@ -246,6 +246,7 @@ function renderAnalysis(data) {
   renderBalanceChart(data.simulation);
   renderRiskScore(data.risk_score);
   renderScenarios(data.scenarios, data.monte_carlo);
+  renderEvents(data.profile.life_events || []);
   loadPrescriptions();
   loadSensitivity();
 }
@@ -530,6 +531,67 @@ function volatilityLabel(volatility) {
 /* ------------------------------------------------------------------ */
 /* 받은 연락 확인                                                       */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 예정된 큰 지출                                                        */
+/* ------------------------------------------------------------------ */
+
+const MAN = 10000; // 입력은 만원 단위로 받는다 — 시니어에게 자연스럽고 오타가 줄어든다
+
+function setupEvents() {
+  $("#event-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const year = Number($("#event-year").value);
+    const amount = Number($("#event-amount").value) * MAN;
+    if (!year || !amount) return;
+
+    applyEvents([
+      ...(state.analysis?.profile?.life_events || []),
+      { year, amount, label: $("#event-label").value.trim() || "큰 지출" },
+    ]);
+    $("#event-label").value = "";
+    $("#event-year").value = "";
+    $("#event-amount").value = "";
+  });
+
+  $("#btn-clear-events").addEventListener("click", () => applyEvents([]));
+}
+
+/* 프로파일에 지출을 반영해 전체 분석을 다시 돌린다. 지출이 들어가면 고갈 시점도
+ * 처방도 민감도도 전부 달라지므로, 화면 일부만 고치지 않고 통째로 다시 그린다. */
+async function applyEvents(events) {
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  try {
+    const data = await api("/api/analysis?briefing=false", {
+      method: "POST",
+      body: JSON.stringify({ ...profile, life_events: events }),
+    });
+    state.analysis = { ...data, briefing: state.analysis.briefing };
+    renderAnalysis(state.analysis);
+  } catch (err) {
+    $("#event-list").textContent = err.message;
+  }
+}
+
+function renderEvents(events) {
+  const box = $("#event-list");
+  box.innerHTML = "";
+  if (!events.length) {
+    box.appendChild(el("p", "hint", "아직 넣으신 큰 지출이 없습니다."));
+    return;
+  }
+  events
+    .slice()
+    .sort((a, b) => a.year - b.year)
+    .forEach((event) => {
+      const row = el("div", "bucket-row");
+      row.appendChild(el("div", "bucket-name", `${event.year}년 · ${event.label}`));
+      row.appendChild(el("strong", null, formatWon(event.amount)));
+      box.appendChild(row);
+    });
+}
 
 /* ------------------------------------------------------------------ */
 /* 처방 — "그래서 무엇을 하면 되나"                                      */
@@ -865,6 +927,7 @@ async function init() {
   setupTabs();
   setupChat();
   setupPolicy();
+  setupEvents();
   setupFraud();
   $("#target-age").addEventListener("change", loadPrescriptions);
   loadPolicyList();

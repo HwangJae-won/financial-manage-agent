@@ -26,14 +26,14 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from agents.llm import ToolCall, ToolResult, ToolSpec
 from agents.fraud import analyze_message
 from core.assumptions import Assumptions, load_assumptions
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_years
-from core.models import UserProfile
+from core.models import LifeEvent, UserProfile
 from core.policy import DEFAULT_POLICY_KEY, analyze_policy_impact, load_policy_catalog
 from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
@@ -64,6 +64,31 @@ class SimulateArgs(_Args):
     other_monthly_income: Optional[int] = Field(
         default=None, ge=0, le=MAX_WON, description="바꿔볼 기타 월소득(임대·근로 등, 원)"
     )
+    one_off_expense_amount: Optional[int] = Field(
+        default=None,
+        gt=0,
+        le=MAX_WON,
+        description="한 번에 나가는 큰 지출 금액(자녀 결혼자금·의료비 등, 원)",
+    )
+    one_off_expense_year: Optional[int] = Field(
+        default=None, ge=2000, le=2100, description="그 지출이 발생하는 연도"
+    )
+    one_off_expense_label: str = Field(
+        default="큰 지출", max_length=40, description="지출 이름 (예: 자녀 결혼자금)"
+    )
+
+    @model_validator(mode="after")
+    def _amount_and_year_go_together(self) -> "SimulateArgs":
+        """금액만 주고 연도를 빼면 언제 나가는 돈인지 알 수 없다.
+
+        조용히 기본값을 넣으면 모델이 의도하지 않은 연도로 계산된 답을 그대로
+        말하게 된다. 오류로 돌려주면 모델이 다시 물어보거나 채워 넣는다.
+        """
+        if (self.one_off_expense_amount is None) != (self.one_off_expense_year is None):
+            raise ValueError(
+                "one_off_expense_amount 와 one_off_expense_year 는 함께 지정해야 합니다"
+            )
+        return self
 
 
 class PrescribeArgs(_Args):
@@ -112,9 +137,21 @@ def _plan_summary(
 def _run_simulate(
     profile: UserProfile, assumptions: Assumptions, args: SimulateArgs
 ) -> dict[str, Any]:
-    overrides = {k: v for k, v in args.model_dump().items() if v is not None}
-    baseline = _plan_summary(profile, assumptions, "현재 계획")
+    plain = ("monthly_expense", "national_pension_start_age", "other_monthly_income")
+    overrides: dict[str, Any] = {
+        key: getattr(args, key) for key in plain if getattr(args, key) is not None
+    }
+    if args.one_off_expense_amount is not None:
+        overrides["life_events"] = [
+            *profile.life_events,
+            LifeEvent(
+                year=args.one_off_expense_year,
+                amount=args.one_off_expense_amount,
+                label=args.one_off_expense_label,
+            ),
+        ]
 
+    baseline = _plan_summary(profile, assumptions, "현재 계획")
     if not overrides:
         return {"현재_계획": baseline, "바꾼_것": "없음"}
 
@@ -135,6 +172,11 @@ def _run_simulate(
         labels.append(
             f"기타 월소득 {fmt_krw(profile.other_monthly_income)} → "
             f"{fmt_krw(args.other_monthly_income)}"
+        )
+    if args.one_off_expense_amount is not None:
+        labels.append(
+            f"{args.one_off_expense_label} {fmt_krw(args.one_off_expense_amount)} "
+            f"({args.one_off_expense_year}년) 반영"
         )
 
     before_age = baseline["금융자산_고갈_나이"] or baseline["시뮬레이션_종료_나이"]
@@ -299,9 +341,10 @@ TOOLS: tuple[Tool, ...] = (
     Tool(
         name="simulate_plan",
         description=(
-            "은퇴 계획을 다시 계산한다. 생활비·국민연금 개시 연령·기타 월소득을 바꿔보고 "
-            "금융자산이 언제 바닥나는지 확인한다. **인자를 모두 생략하면 현재 계획 그대로 "
-            "계산해 기준값을 준다.** '생활비를 50만원 줄이면?' 같은 가정 질문에 쓴다."
+            "은퇴 계획을 다시 계산한다. 생활비·국민연금 개시 연령·기타 월소득을 바꿔보거나, "
+            "자녀 결혼자금처럼 한 번에 나가는 큰 지출을 넣어보고 금융자산이 언제 바닥나는지 "
+            "확인한다. **인자를 모두 생략하면 현재 계획 그대로 계산해 기준값을 준다.** "
+            "'생활비를 50만원 줄이면?', '내후년에 결혼자금 5천만원이 나가면?' 같은 질문에 쓴다."
         ),
         args_model=SimulateArgs,
         handler=_run_simulate,

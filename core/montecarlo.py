@@ -138,6 +138,7 @@ def run_monte_carlo(
             + plan.pension_income
             + plan.other_income
             - plan.expense
+            - plan.event_expense
             - tax
         )
 

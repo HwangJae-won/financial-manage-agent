@@ -112,6 +112,23 @@
           </p>
           <div id="scenarios"></div>
 
+          <h3>예정된 큰 지출</h3>
+          <p class="section-note">
+            자녀 결혼자금, 목돈 의료비, 주택 수리처럼 <strong>한 번에 나가는 큰돈</strong>은
+            매달의 생활비보다 계획을 크게 흔듭니다. 예정된 것이 있으면 넣어보세요.
+          </p>
+          <form id="event-form" class="row-actions">
+            <label class="visually-hidden" for="event-label">지출 이름</label>
+            <input id="event-label" type="text" placeholder="자녀 결혼자금" maxlength="40" />
+            <label class="visually-hidden" for="event-year">연도</label>
+            <input id="event-year" type="number" placeholder="연도" min="2000" max="2100" />
+            <label class="visually-hidden" for="event-amount">금액(만원)</label>
+            <input id="event-amount" type="number" placeholder="금액(만원)" min="1" />
+            <button type="submit" class="btn btn-secondary">넣고 다시 계산</button>
+            <button type="button" class="btn btn-ghost" id="btn-clear-events">모두 지우기</button>
+          </form>
+          <div id="event-list"></div>
+
           <h3>그래서 무엇을 하면 되나</h3>
           <p class="section-note">
             아래 중 <strong>하나만</strong> 하셔도 목표 나이까지 자산이 유지됩니다.

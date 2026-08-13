@@ -26,6 +26,7 @@ class YearPlan(BaseModel):
     year_index: int = 0
     inflation_factor: float = 1.0
     expense: float = 0.0
+    event_expense: float = 0.0
     pension_income: float = 0.0
     other_income: float = 0.0
 
@@ -43,6 +44,17 @@ def _active_months(year: int, profile: UserProfile) -> int:
     """해당 연도에 시뮬레이션이 적용되는 개월 수 (퇴직 연도는 퇴직월부터)."""
     start_month = profile.retirement_month if year == profile.retirement_year else 1
     return 13 - start_month
+
+
+def _event_expense(year: int, profile: UserProfile, inflation_factor: float) -> float:
+    """해당 연도의 일회성 큰 지출 합계.
+
+    금액은 퇴직 시점 기준으로 보고 물가를 반영한다 — 월 생활비와 같은 규약이다.
+    시뮬레이션 구간 밖의 연도는 조용히 무시한다(입력 오류로 계산을 멈추지 않는다).
+    """
+    return sum(
+        event.amount for event in profile.life_events if event.year == year
+    ) * inflation_factor
 
 
 def _pension_months(year: int, profile: UserProfile) -> int:
@@ -113,6 +125,7 @@ def build_schedule(
                 year_index=year_index,
                 inflation_factor=inflation_factor,
                 expense=profile.monthly_expense * inflation_factor * months,
+                event_expense=_event_expense(year, profile, inflation_factor),
                 pension_income=pension_income,
                 other_income=other_income,
             )

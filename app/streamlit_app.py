@@ -35,7 +35,7 @@ from agents.profiling import ProfilingAgent
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_pct, fmt_years
-from core.models import RiskTolerance, UserProfile
+from core.models import LifeEvent, RiskTolerance, UserProfile
 from core.montecarlo import run_monte_carlo
 from core.policy import PolicyImpact, analyze_policy_impact
 from core.prescribe import PrescriptionSet, prescribe
@@ -123,7 +123,25 @@ def profile_form() -> UserProfile:
             "국민연금 개시 연령", 55, 75, base.national_pension_start_age, step=1
         )
 
+    # 이 연령대의 계획을 실제로 흔드는 것은 매달의 생활비가 아니라 한 번에 나가는 큰돈이다.
+    with st.expander("예정된 큰 지출이 있으신가요? (자녀 결혼자금·의료비 등)"):
+        event_label = st.text_input("지출 이름", value="자녀 결혼자금")
+        event_col1, event_col2 = st.columns(2)
+        with event_col1:
+            event_year = st.number_input(
+                "연도", 0, 2100, 0, step=1, help="0이면 반영하지 않습니다"
+            )
+        with event_col2:
+            event_amount = st.number_input("금액(만원)", 0, 100_000, 0, step=100)
+
+    life_events = (
+        [LifeEvent(year=int(event_year), amount=int(event_amount) * MAN, label=event_label)]
+        if event_year and event_amount
+        else []
+    )
+
     return UserProfile(
+        life_events=life_events,
         birth_year=birth_year,
         birth_month=birth_month,
         retirement_year=retirement_year,
@@ -705,6 +723,14 @@ def main() -> None:
                 "기본값으로 가정했습니다. 왼쪽에서 '직접 입력'으로 바꾸면 수정하실 수 있습니다."
             )
         st.divider()
+
+    if profile.life_events:
+        st.info(
+            "예정된 큰 지출이 반영되었습니다: "
+            + ", ".join(
+                f"{e.year}년 {e.label} {fmt_krw(e.amount)}" for e in profile.life_events
+            )
+        )
 
     render_headline(profile, sim, amap)
     st.divider()

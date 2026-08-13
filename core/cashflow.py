@@ -116,6 +116,7 @@ def simulate(
                     pension_income=0,
                     other_income=0,
                     expense=0,
+                    event_expense=0,
                     tax=0,
                     end_balance=0,
                 )
@@ -135,6 +136,7 @@ def simulate(
             + plan.pension_income
             + plan.other_income
             - plan.expense
+            - plan.event_expense
             - tax
         )
 
@@ -155,6 +157,7 @@ def simulate(
                 pension_income=int(round(plan.pension_income)),
                 other_income=int(round(plan.other_income)),
                 expense=int(round(plan.expense)),
+                event_expense=int(round(plan.event_expense)),
                 tax=int(round(tax)),
                 end_balance=int(round(end_balance)),
             )
