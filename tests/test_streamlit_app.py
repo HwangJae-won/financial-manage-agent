@@ -238,6 +238,31 @@ def test_briefing_numbers_are_verified(chat_app):
     assert not [w for w in chat_app.warning if "확인되지 않았습니다" in w.value]
 
 
+def test_the_chat_stays_open_after_the_result(chat_app):
+    """대화가 끝나도 입력창이 닫히면 안 된다 — 상담 에이전트에 닿을 길이 그것뿐이다."""
+    headings = " ".join(h.value for h in chat_app.subheader)
+    assert "궁금한 점을 물어보세요" in headings
+    assert chat_app.chat_input  # 여전히 열려 있다
+
+
+def test_example_questions_are_offered(chat_app):
+    """빈 입력창 앞에서 무엇을 물어야 할지 몰라 멈추는 것이 가장 흔한 이탈이다."""
+    labels = [b.label for b in chat_app.button]
+    assert "생활비를 50만원 줄이면 어떻게 되나요?" in labels
+
+
+def test_asking_a_follow_up_runs_a_calculation(chat_app):
+    """예시 질문을 누르면 도구가 실제로 돌아야 한다."""
+    button = next(
+        b for b in chat_app.button if b.label == "생활비를 50만원 줄이면 어떻게 되나요?"
+    )
+    after = button.click().run()
+
+    assert not after.exception, after.exception
+    text = " ".join(m.value for m in after.markdown)
+    assert "생활비를 50만원 줄이면 어떻게 되나요?" in text  # 내 질문이 남는다
+
+
 def test_conversation_advances_to_the_next_question():
     at = _fresh()
     at.chat_input[0].set_value("1966년 12월생입니다").run()

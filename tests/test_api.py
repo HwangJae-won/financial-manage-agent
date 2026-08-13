@@ -202,6 +202,61 @@ def test_samples_are_available(client):
 
 
 # --------------------------------------------------------------------------- #
+# 결과 이후의 대화 (A6) — 한 창구로 들어가 Supervisor 가 나눈다
+# --------------------------------------------------------------------------- #
+
+
+def test_a_question_after_the_result_goes_to_the_advisor(client, finished_session):
+    """같은 엔드포인트인데 대화가 끝난 뒤라 상담으로 간다."""
+    body = client.post(
+        f"/api/sessions/{finished_session}/messages",
+        json={"text": "생활비를 50만원 줄이면 어떻게 되나요?"},
+    ).json()
+
+    assert body["kind"] == "advice"
+    assert body["routed_to"] == "result"
+    assert body["routing_reason"]
+    assert body["advice"]["trace"]  # 실제로 계산을 돌렸다
+    assert body["advice"]["unverified_numbers"] == []
+
+
+def test_the_conversation_keeps_growing_after_the_result(client, finished_session):
+    """상담 답변도 같은 대화에 쌓여야 한다 — 사용자에게는 하나의 대화다."""
+    before = len(
+        client.get(f"/api/sessions/{finished_session}").json()["messages"]
+    )
+    body = client.post(
+        f"/api/sessions/{finished_session}/messages",
+        json={"text": "95세까지 유지하려면 어떻게 해야 하나요?"},
+    ).json()
+
+    assert len(body["messages"]) == before + 2
+    assert body["messages"][-1]["role"] == "assistant"
+
+
+def test_profiling_answers_are_not_treated_as_advice(client):
+    """대화 중에는 kind 가 question 이어야 한다. 여기서 갈리면 진행이 멈춘다."""
+    session_id = client.post("/api/sessions").json()["session_id"]
+    body = client.post(
+        f"/api/sessions/{session_id}/messages", json={"text": "1966년 12월생입니다"}
+    ).json()
+
+    assert body["kind"] == "question"
+    assert body["advice"] is None
+
+
+def test_a_scam_message_routes_to_fraud_even_mid_conversation(client):
+    """상담 화면에 사기 문자를 붙여넣어도 사기 확인으로 가야 한다."""
+    session_id = client.post("/api/sessions").json()["session_id"]
+    body = client.post(
+        f"/api/sessions/{session_id}/messages", json={"text": SCAM}
+    ).json()
+
+    assert body["kind"] == "fraud"
+    assert body["fraud"]["risk_level"] == "위험"
+
+
+# --------------------------------------------------------------------------- #
 # 사기 확인
 # --------------------------------------------------------------------------- #
 

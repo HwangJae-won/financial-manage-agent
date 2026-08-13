@@ -25,7 +25,8 @@ from agents.explain import Briefing, explain
 from agents.fraud import FraudAssessment, analyze_message
 from agents.llm import MockClient, get_client
 from agents.mocks import demo_handler
-from agents.profiling import ProfilingAgent
+from agents.advisor import AdvisorReply
+from agents.graph import Supervisor, SupervisorReply
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_years
@@ -56,7 +57,7 @@ app = FastAPI(
 )
 
 # 세션 저장소 — 데모용 인메모리. 실서비스에서는 Redis/DB 로 교체할 것.
-_SESSIONS: dict[str, ProfilingAgent] = {}
+_SESSIONS: dict[str, Supervisor] = {}
 _MAX_SESSIONS = 200
 
 
@@ -95,6 +96,19 @@ class ConversationState(BaseModel):
     answered: int
     total: int
     error: Optional[str] = None
+
+    # 결과가 나온 뒤의 답변에만 붙는다. 프로파일링 중에는 전부 None 이다.
+    kind: str = Field(
+        default="question", description="question / advice / fraud — 화면이 어떻게 그릴지"
+    )
+    routed_to: Optional[str] = Field(
+        default=None, description="어느 에이전트로 갔는지 (Supervisor 분류 결과)"
+    )
+    routing_reason: str = ""
+    advice: Optional[AdvisorReply] = Field(
+        default=None, description="상담 에이전트의 답변과 실행 기록(trace)"
+    )
+    fraud: Optional[FraudAssessment] = None
 
 
 class UserMessage(BaseModel):
@@ -226,20 +240,31 @@ class PolicyImpactRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
-def _state_of(session_id: str, agent: ProfilingAgent) -> ConversationState:
-    answered, total = agent.progress
-    return ConversationState(
+def _state_of(
+    session_id: str,
+    supervisor: Supervisor,
+    reply: Optional[SupervisorReply] = None,
+) -> ConversationState:
+    answered, total = supervisor.progress
+    state = ConversationState(
         session_id=session_id,
-        messages=[Message(**m) for m in agent.state.get("messages", [])],
-        done=agent.done,
-        ready=agent.ready,
+        messages=[Message(**m) for m in supervisor.messages],
+        done=supervisor.done,
+        ready=supervisor.ready,
         answered=answered,
         total=total,
-        error=agent.state.get("error"),
+        error=supervisor.profiler.state.get("error"),
     )
+    if reply is not None:
+        state.kind = reply.kind
+        state.routed_to = reply.intent.value
+        state.routing_reason = reply.reason
+        state.advice = reply.advice
+        state.fraud = reply.fraud
+    return state
 
 
-def _get_agent(session_id: str) -> ProfilingAgent:
+def _get_agent(session_id: str) -> Supervisor:
     agent = _SESSIONS.get(session_id)
     if agent is None:
         raise HTTPException(404, "세션을 찾을 수 없습니다. 다시 시작해 주세요.")
@@ -314,7 +339,7 @@ def create_session() -> ConversationState:
             _SESSIONS.pop(stale, None)
 
     session_id = uuid.uuid4().hex
-    agent = ProfilingAgent(client=_client())
+    agent = Supervisor(client=_client())
     agent.start()
     _SESSIONS[session_id] = agent
     return _state_of(session_id, agent)
@@ -327,10 +352,15 @@ def get_session(session_id: str) -> ConversationState:
 
 @app.post("/api/sessions/{session_id}/messages", response_model=ConversationState)
 def send_message(session_id: str, message: UserMessage) -> ConversationState:
-    """사용자 답변을 보내고 다음 질문을 받는다."""
+    """대화의 단일 창구.
+
+    Supervisor 가 분류해서 보낸다 — 프로파일링 답변이면 다음 질문을, 결과가 나온
+    뒤의 질문이면 도구를 돌린 상담 답변을, 붙여넣은 문자면 사기 확인 결과를
+    돌려준다. 화면은 `kind` 만 보고 어떻게 그릴지 정한다.
+    """
     agent = _get_agent(session_id)
-    agent.respond(message.text)
-    return _state_of(session_id, agent)
+    reply = agent.send(message.text)
+    return _state_of(session_id, agent, reply)
 
 
 @app.get("/api/sessions/{session_id}/analysis", response_model=AnalysisResponse)

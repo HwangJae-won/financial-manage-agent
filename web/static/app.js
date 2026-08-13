@@ -145,13 +145,25 @@ function renderConversation(data) {
   $(".progress-track").setAttribute("aria-valuemax", String(data.total));
 
   $("#btn-see-result").classList.toggle("hidden", !(data.ready && !data.done));
-  $("#chat-hint").textContent = data.error || "";
 
   const finished = data.done;
-  $("#chat-input").disabled = finished;
-  $("#chat-send").disabled = finished;
 
-  if (finished) loadAnalysis();
+  // 대화가 끝나도 입력창을 닫지 않는다. 결과를 두고 **이어서 묻는 것**이 이
+  // 화면의 다음 역할이기 때문이다. 닫아 버리면 상담 에이전트에 닿을 길이 없다.
+  $("#chat-input").disabled = false;
+  $("#chat-send").disabled = false;
+  $("#chat-input").placeholder = finished
+    ? "결과를 보고 궁금한 점을 물어보세요"
+    : "편하게 말씀해 주세요";
+  $("#chat-hint").textContent =
+    data.error ||
+    (finished
+      ? "예: 생활비를 50만원 줄이면 어떻게 되나요? / 국민연금을 더 내는 게 나을까요?"
+      : "");
+
+  // 결과 화면으로 넘기는 것은 **처음 한 번만.** 이후 질문마다 화면이 튀면
+  // 대화를 이어갈 수 없다.
+  if (finished && !state.analysis) loadAnalysis();
 }
 
 async function startSession() {
@@ -204,6 +216,16 @@ function setupChat() {
   });
 
   $("#btn-see-result").addEventListener("click", loadAnalysis);
+
+  // 결과 화면의 예시 질문 버튼. 시니어 사용자에게는 "무엇이든 물어보세요" 보다
+  // 눌러볼 수 있는 문장 세 개가 훨씬 낫다.
+  $$("[data-ask]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      showView("chat");
+      $("#chat-input").value = btn.dataset.ask;
+      $("#chat-form").requestSubmit();
+    }),
+  );
 }
 
 /* ------------------------------------------------------------------ */

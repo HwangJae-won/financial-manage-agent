@@ -31,7 +31,7 @@ from agents.explain import Briefing, explain
 from agents.fraud import RiskLevel, Severity, analyze_message
 from agents.llm import MockClient, get_client
 from agents.mocks import demo_handler
-from agents.profiling import ProfilingAgent
+from agents.graph import Supervisor
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_pct, fmt_years
@@ -255,24 +255,30 @@ def llm_status() -> str:
 
 
 def render_conversation() -> UserProfile | None:
-    """대화로 프로파일을 채운다. 완료되면 UserProfile 을 돌려준다."""
+    """대화로 프로파일을 채운다. 완료되면 UserProfile 을 돌려준다.
+
+    프로파일링이 끝나도 대화는 끝나지 않는다. Supervisor 가 그 뒤의 질문을 상담
+    에이전트로 넘기므로, 입력창은 계속 열어 둔다.
+    """
     if "agent" not in st.session_state:
-        agent = ProfilingAgent(client=llm_client())
+        agent = Supervisor(client=llm_client())
         agent.start()
         st.session_state.agent = agent
 
-    agent: ProfilingAgent = st.session_state.agent
+    agent: Supervisor = st.session_state.agent
 
     st.subheader("상담")
     answered, total = agent.progress
     st.progress(answered / total, text=f"{answered} / {total}개 확인")
 
-    for message in agent.state.get("messages", []):
+    # 여기에는 프로파일링 대화만 그린다. 그 뒤의 상담은 결과 아래
+    # (render_followup)에 붙는다 — 결과를 보고 묻는 질문이라 결과 옆에 있어야 한다.
+    for message in agent.profiler.state.get("messages", []):
         with st.chat_message("assistant" if message["role"] == "assistant" else "user"):
             st.markdown(message["content"])
 
     if not agent.done:
-        question_key = agent.state.get("pending_question")
+        question_key = agent.profiler.state.get("pending_question")
         placeholder = "말씀해 주세요"
         if question_key:
             from agents.slots import QUESTION_BY_KEY
@@ -282,7 +288,7 @@ def render_conversation() -> UserProfile | None:
                 placeholder = hint
 
         if answer := st.chat_input(placeholder):
-            agent.respond(answer)
+            agent.send(answer)
             st.rerun()
 
         if agent.ready:
@@ -299,6 +305,44 @@ def render_conversation() -> UserProfile | None:
     except ValueError as exc:
         st.error(str(exc))
         return None
+
+
+EXAMPLE_QUESTIONS = (
+    "생활비를 50만원 줄이면 어떻게 되나요?",
+    "국민연금을 더 내는 게 나을까요?",
+    "95세까지 유지하려면 어떻게 해야 하나요?",
+)
+
+
+def render_followup(agent: Supervisor) -> None:
+    """결과를 보고 이어서 묻는 자리 (A6).
+
+    지금까지 이 서비스는 한 번 계산하고 끝이었다. "생활비를 50만원 줄이면요?"는
+    계산을 다시 돌려야 답할 수 있는 질문이고, 그 루프가 상담 에이전트다.
+    여기가 그 에이전트에 닿는 유일한 입구다.
+
+    시니어 사용자에게는 "무엇이든 물어보세요" 보다 **눌러볼 수 있는 문장 세 개**가
+    낫다. 빈 입력창 앞에서 무엇을 물어야 할지 몰라 멈추는 것이 가장 흔한 이탈이다.
+    """
+    st.divider()
+    st.subheader("여기까지 보시고, 궁금한 점을 물어보세요")
+    st.caption(
+        "화면에 없는 것도 물어보실 수 있습니다. 상담사가 계산을 다시 돌려서 답해 드립니다."
+    )
+
+    columns = st.columns(len(EXAMPLE_QUESTIONS))
+    for column, question in zip(columns, EXAMPLE_QUESTIONS):
+        if column.button(question, use_container_width=True):
+            agent.send(question)
+            st.rerun()
+
+    for message in agent.followups:
+        with st.chat_message("assistant" if message["role"] == "assistant" else "user"):
+            st.markdown(message["content"])
+
+    if asked := st.chat_input("궁금한 점을 물어보세요"):
+        agent.send(asked)
+        st.rerun()
 
 
 SAMPLE_SCAM = """[특별안내] 고객님만 드리는 기회입니다.
@@ -988,6 +1032,10 @@ def main() -> None:
     render_sensitivity(profile)
     st.divider()
     render_policy_impact(profile)
+
+    # 결과를 다 본 뒤에 온다. 여기서부터는 사용자가 묻고 에이전트가 계산한다.
+    if mode == "대화로 알아보기" and isinstance(st.session_state.get("agent"), Supervisor):
+        render_followup(st.session_state.agent)
 
     st.divider()
     st.caption(

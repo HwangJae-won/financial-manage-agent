@@ -199,11 +199,40 @@ class Supervisor:
         self.client = client or get_client()
         self.profiler = ProfilingAgent(client=self.client, today=today)
         self._advisor: Optional[Advisor] = None
+        # 프로파일링이 끝난 뒤의 주고받음. 프로파일링 대화는 profiler 가 들고 있으므로
+        # 여기에는 그 이후 것만 쌓인다. 화면은 둘을 이어 붙인 하나의 대화를 본다.
+        self._after: list[dict[str, str]] = []
 
     # -- 상태 ------------------------------------------------------------- #
 
     def start(self) -> str:
         return self.profiler.start()
+
+    @property
+    def messages(self) -> list[dict[str, str]]:
+        """화면에 그리는 대화 전체 — 프로파일링과 그 이후를 이어 붙인 것.
+
+        사용자에게는 하나의 대화다. 어느 에이전트가 답했는지는 중간에 갈리지만
+        말풍선은 끊기지 않아야 한다.
+        """
+        return [*(self.profiler.state.get("messages") or []), *self._after]
+
+    @property
+    def followups(self) -> list[dict[str, str]]:
+        """프로파일링이 끝난 뒤의 주고받음만.
+
+        화면에 따라 둘을 붙여 보이기도 하고(웹의 말풍선 하나짜리 대화창),
+        나눠 보이기도 한다(Streamlit 은 결과가 사이에 끼어 있다).
+        """
+        return list(self._after)
+
+    @property
+    def progress(self) -> tuple[int, int]:
+        return self.profiler.progress
+
+    def _record(self, question: str, answer: str) -> None:
+        self._after.append({"role": "user", "content": question})
+        self._after.append({"role": "assistant", "content": answer})
 
     @property
     def done(self) -> bool:
@@ -213,10 +242,14 @@ class Supervisor:
     def ready(self) -> bool:
         return self.profiler.ready
 
+    def build_profile(self) -> UserProfile:
+        """완성된 프로파일. 아직이면 ValueError — 호출자가 400 으로 옮긴다."""
+        return self.profiler.build_profile()
+
     def profile(self) -> Optional[UserProfile]:
         """완성된 프로파일. 아직이면 None — 예외로 흐름을 끊지 않는다."""
         try:
-            return self.profiler.build_profile()
+            return self.build_profile()
         except ValueError:
             return None
 
@@ -283,6 +316,7 @@ class Supervisor:
 
     def _to_fraud(self, text: str, routing: Routing) -> SupervisorReply:
         assessment = analyze_message(text, profile=self.profile())
+        self._record(text, assessment.summary)
         return SupervisorReply(
             **self._base(routing, "fraud", assessment.summary), fraud=assessment
         )
@@ -291,9 +325,11 @@ class Supervisor:
         advisor = self.advisor()
         if advisor is None:
             # 결과를 묻는데 아직 계산할 수 없다. 되묻지 않고 진행 상황을 말한다.
+            self._record(text, NOT_READY_YET)
             return SupervisorReply(**self._base(routing, "question", NOT_READY_YET))
 
         reply = advisor.ask(text)
+        self._record(text, reply.text)
         return SupervisorReply(
             **self._base(routing, "advice", reply.text), advice=reply
         )
