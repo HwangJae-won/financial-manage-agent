@@ -13,7 +13,7 @@
      기타소득(임대·근로)은 물가에 연동하지 않는다(보수적).
   4. 세금은 이자·배당 성격의 수익(현금성·채권)에만 부과한다. 국내주식 양도차익은
      소액주주 비과세 현실을 반영해 과세하지 않는다.
-  5. 퇴직 연도와 연금 개시 연도는 개월 단위로 안분한다.
+  5. 퇴직 연도와 연금 개시 연도는 개월 단위로 안분한다 (core/schedule.py).
 """
 
 from __future__ import annotations
@@ -22,27 +22,33 @@ from typing import Optional
 
 from core.assumptions import Assumptions, load_assumptions
 from core.models import Allocation, SimulationResult, UserProfile, YearRow
+from core.schedule import build_schedule
 
 
-def _active_months(year: int, profile: UserProfile) -> int:
-    """해당 연도에 시뮬레이션이 적용되는 개월 수 (퇴직 연도는 퇴직월부터)."""
-    start_month = profile.retirement_month if year == profile.retirement_year else 1
-    return 13 - start_month
+def split_return_rates(
+    allocation: Allocation, assumptions: Assumptions
+) -> tuple[float, float]:
+    """배분을 (과세 대상 수익률, 비과세 수익률)로 나눈다.
+
+    현금성·채권 수익은 이자·배당 성격이라 과세 대상이고,
+    주식 수익은 국내 소액주주 양도차익 비과세를 반영해 과세하지 않는다.
+    몬테카를로도 같은 규약을 써야 하므로 여기에 둔다.
+    """
+    weights = allocation.as_dict()
+    classes = assumptions.asset_classes
+    taxable = sum(weights[key] * classes[key].expected_return for key in ("cash", "bond"))
+    untaxed = weights["equity"] * classes["equity"].expected_return
+    return taxable, untaxed
 
 
-def _pension_months(year: int, profile: UserProfile) -> int:
-    """해당 연도에 국민연금을 수령하는 개월 수."""
-    if profile.national_pension_monthly <= 0:
-        return 0
-
-    pension_year = profile.pension_start_year
-    if year < pension_year:
-        return 0
-
-    pension_start_month = profile.birth_month if year == pension_year else 1
-    period_start_month = profile.retirement_month if year == profile.retirement_year else 1
-    effective_start = max(pension_start_month, period_start_month)
-    return max(0, 13 - effective_start)
+def annual_tax(taxable_return: float, assumptions: Assumptions) -> float:
+    """금융소득세 + 건강보험료 소득분 근사. 손실이 난 해에는 0."""
+    if taxable_return <= 0:
+        return 0.0
+    income_tax = taxable_return * assumptions.tax.financial_income_rate
+    hi = assumptions.health_insurance
+    hi_base = max(0.0, taxable_return - hi.exemption_threshold)
+    return income_tax + hi_base * hi.effective_rate_on_financial_income
 
 
 def simulate(
@@ -66,18 +72,8 @@ def simulate(
     assumptions = assumptions or load_assumptions()
     allocation = allocation or profile.current_allocation()
 
-    weights = allocation.as_dict()
-    classes = assumptions.asset_classes
-    inflation = assumptions.macro.inflation_rate
-
-    # 이자·배당 성격(과세 대상)과 주식 양도차익 성격(비과세)을 분리한다.
-    taxable_return_rate = sum(
-        weights[key] * classes[key].expected_return for key in ("cash", "bond")
-    )
-    equity_return_rate = weights["equity"] * classes["equity"].expected_return
-
-    start_year = profile.retirement_year
-    end_year = profile.birth_year + assumptions.macro.horizon_age
+    taxable_rate, untaxed_rate = split_return_rates(allocation, assumptions)
+    plans = build_schedule(profile, assumptions, include_income=include_income)
 
     balance = float(profile.financial_assets)
     starting_balance = int(round(balance))
@@ -88,23 +84,17 @@ def simulate(
     depletion_year: Optional[int] = None
     balance_at_pension_start: Optional[int] = None
 
-    for year in range(start_year, end_year + 1):
-        age = year - profile.birth_year
-        months = _active_months(year, profile)
-        frac = months / 12.0
-        year_index = year - start_year
-        inflation_factor = (1.0 + inflation) ** year_index
-
-        if balance_at_pension_start is None and year >= profile.pension_start_year:
+    for plan in plans:
+        if balance_at_pension_start is None and plan.year >= profile.pension_start_year:
             balance_at_pension_start = int(round(balance))
 
         if depletion_year is not None:
             # 이미 고갈된 이후 — 차트 길이를 맞추기 위해 0으로 채운다.
             rows.append(
                 YearRow(
-                    year=year,
-                    age=age,
-                    active_months=months,
+                    year=plan.year,
+                    age=plan.age,
+                    active_months=plan.active_months,
                     start_balance=0,
                     investment_return=0,
                     pension_income=0,
@@ -117,56 +107,38 @@ def simulate(
             continue
 
         start_balance = balance
+        frac = plan.frac
 
-        # --- 수익 ---
-        taxable_return = start_balance * taxable_return_rate * frac
-        equity_return = start_balance * equity_return_rate * frac
-        investment_return = taxable_return + equity_return
-
-        # --- 소득 ---
-        if include_income:
-            pension_factor = inflation_factor if assumptions.pension.indexed_to_inflation else 1.0
-            pension_income = (
-                profile.national_pension_monthly
-                * pension_factor
-                * _pension_months(year, profile)
-            )
-            other_income = profile.other_monthly_income * months
-        else:
-            pension_income = 0.0
-            other_income = 0.0
-
-        # --- 지출 ---
-        expense = profile.monthly_expense * inflation_factor * months
-
-        # --- 세금 (금융소득세 + 건강보험료 소득분 근사) ---
-        income_tax = taxable_return * assumptions.tax.financial_income_rate
-        hi = assumptions.health_insurance
-        hi_base = max(0.0, taxable_return - hi.exemption_threshold)
-        health_premium = hi_base * hi.effective_rate_on_financial_income
-        tax = income_tax + health_premium
+        taxable_return = start_balance * taxable_rate * frac
+        investment_return = taxable_return + start_balance * untaxed_rate * frac
+        tax = annual_tax(taxable_return, assumptions)
 
         end_balance = (
-            start_balance + investment_return + pension_income + other_income - expense - tax
+            start_balance
+            + investment_return
+            + plan.pension_income
+            + plan.other_income
+            - plan.expense
+            - tax
         )
 
         if end_balance < 0:
             drain = start_balance - end_balance
             portion = start_balance / drain if drain > 0 else 0.0
             years_until_depletion = elapsed_years + portion * frac
-            depletion_year = year
+            depletion_year = plan.year
             end_balance = 0.0
 
         rows.append(
             YearRow(
-                year=year,
-                age=age,
-                active_months=months,
+                year=plan.year,
+                age=plan.age,
+                active_months=plan.active_months,
                 start_balance=int(round(start_balance)),
                 investment_return=int(round(investment_return)),
-                pension_income=int(round(pension_income)),
-                other_income=int(round(other_income)),
-                expense=int(round(expense)),
+                pension_income=int(round(plan.pension_income)),
+                other_income=int(round(plan.other_income)),
+                expense=int(round(plan.expense)),
                 tax=int(round(tax)),
                 end_balance=int(round(end_balance)),
             )
