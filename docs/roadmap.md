@@ -76,7 +76,7 @@ Supervisor (규칙 우선, 애매할 때만 LLM)          [있음]
 | | 작업 | 크기 | 의존 |
 |---|---|---|---|
 | A1 | `LLMClient` 에 tool use 추가 (anthropic / openai / **mock**) | 중간 | ✅ 완료 |
-| A2 | `agents/tools.py` — `core/` 함수를 도구로 노출 | 작음 | A1 |
+| A2 | `agents/tools.py` — `core/` 함수를 도구로 노출 | 작음 | ✅ 완료 |
 | A3 | 실행 루프 + 반복 상한 + 실패 fallback | 중간 | A2 |
 | A4 | trace 노출 — 어떤 도구를 어떤 인자로 불러 무슨 값이 나왔는가 | 작음 | A3 |
 | A5 | Supervisor 연결 (정의만 되어 있는 `RESULT` intent 소비) | 작음 | A3 |

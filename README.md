@@ -55,6 +55,7 @@ agents/          LLM 계층. core/ 의 결과를 사람의 말로 옮긴다
   profiling.py     LangGraph 대화형 프로파일링
   explain.py       브리핑 생성 + 숫자 검증
   fraud.py         사기·불완전판매 탐지 (규칙 + 정책대조 + 프로필연결)
+  tools.py         core/ 계산을 에이전트의 도구로 노출 (LLM 은 인자만 고른다)
   graph.py         Supervisor 라우팅
   mocks.py         키 없이 도는 추출기·브리핑
 data/            가정값·룰 YAML. 모든 숫자에 근거 주석 필수
@@ -62,7 +63,7 @@ app/             Streamlit UI (데모 안전망 — 웹이 깨져도 돌아간�
 web/             FastAPI + 순수 HTML/CSS/JS 프런트엔드
   api.py           core/agents 를 HTTP 로 감싸는 얇은 어댑터
   static/          빌드 도구 없는 프런트엔드
-tests/           pytest (361개)
+tests/           pytest (383개)
 ```
 
 `schedule.py`가 분리되어 있는 이유: 퇴직월·연금개시월 안분과 물가연동처럼 틀리기
