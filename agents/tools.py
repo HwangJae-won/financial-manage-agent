@@ -230,9 +230,48 @@ def _run_message(
     }
 
 
+def _sum_simulate(args: SimulateArgs, out: dict[str, Any]) -> str:
+    if out["바꾼_것"] == "없음":
+        return f"현재 계획 확인 → {out['현재_계획']['고갈_여부']}"
+    return f"{out['바꾼_것']} → {out['바꾼_계획']['고갈_여부']} ({out['고갈_시점_변화']})"
+
+
+def _sum_prescribe(args: PrescribeArgs, out: dict[str, Any]) -> str:
+    가능 = sum(1 for o in out["선택지"] if o["목표_달성_가능"])
+    return f"만 {out['목표_나이']}세 목표로 역산 → 가능한 방법 {가능}개"
+
+
+def _sum_sensitivity(args: SensitivityArgs, out: dict[str, Any]) -> str:
+    top = out["가정별_흔들림"][0]
+    return f"가정별 민감도 → {top['가정']}이(가) 가장 큼 ({top['흔들림']})"
+
+
+def _sum_policy(args: PolicyArgs, out: dict[str, Any]) -> str:
+    return f"{out['제도']} {out['확정여부']} → {out['한_문장']}"
+
+
+def _sum_message(args: MessageArgs, out: dict[str, Any]) -> str:
+    return f"받은 메시지 확인 → 위험도 {out['위험도']} · 신호 {len(out['걸린_신호'])}개"
+
+
 # --------------------------------------------------------------------------- #
 # 등록
 # --------------------------------------------------------------------------- #
+
+
+@dataclass
+class ToolRun:
+    """도구를 한 번 실행한 기록. 화면의 trace 가 이것을 그대로 그린다.
+
+    에이전트가 자율적으로 움직여도 **무엇을 어떤 인자로 불러 무슨 값이 나왔는지**가
+    남는다. 사기 탐지가 '걸린 표현'을 그대로 보여주는 것과 같은 원리다.
+    """
+
+    name: str
+    arguments: dict[str, Any]
+    ok: bool
+    summary: str
+    output: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -243,6 +282,7 @@ class Tool:
     description: str
     args_model: type[BaseModel]
     handler: Callable[[UserProfile, Assumptions, Any], dict[str, Any]]
+    summarize: Callable[[Any, dict[str, Any]], str] = lambda args, out: ""
 
     @property
     def spec(self) -> ToolSpec:
@@ -265,6 +305,7 @@ TOOLS: tuple[Tool, ...] = (
         ),
         args_model=SimulateArgs,
         handler=_run_simulate,
+        summarize=_sum_simulate,
     ),
     Tool(
         name="prescribe",
@@ -275,6 +316,7 @@ TOOLS: tuple[Tool, ...] = (
         ),
         args_model=PrescribeArgs,
         handler=_run_prescribe,
+        summarize=_sum_prescribe,
     ),
     Tool(
         name="sensitivity",
@@ -284,6 +326,7 @@ TOOLS: tuple[Tool, ...] = (
         ),
         args_model=SensitivityArgs,
         handler=_run_sensitivity,
+        summarize=_sum_sensitivity,
     ),
     Tool(
         name="policy_impact",
@@ -294,6 +337,7 @@ TOOLS: tuple[Tool, ...] = (
         ),
         args_model=PolicyArgs,
         handler=_run_policy,
+        summarize=_sum_policy,
     ),
     Tool(
         name="check_message",
@@ -304,6 +348,7 @@ TOOLS: tuple[Tool, ...] = (
         ),
         args_model=MessageArgs,
         handler=_run_message,
+        summarize=_sum_message,
     ),
 )
 
@@ -328,7 +373,12 @@ class Toolbox:
         self.profile = profile
         self.assumptions = assumptions or load_assumptions()
         self.tools = {tool.name: tool for tool in tools}
-        self.outputs: list[dict[str, Any]] = []
+        self.runs: list[ToolRun] = []
+
+    @property
+    def outputs(self) -> list[dict[str, Any]]:
+        """성공한 호출의 출력만. 이것이 곧 '인용 가능한 숫자'의 범위가 된다."""
+        return [run.output for run in self.runs if run.ok]
 
     @property
     def specs(self) -> list[ToolSpec]:
@@ -363,11 +413,32 @@ class Toolbox:
         except Exception as exc:  # 엔진이 터져도 대화는 끊지 않는다
             return self._error(call, f"계산 중 문제가 발생했습니다: {exc}")
 
-        self.outputs.append(output)
+        try:
+            summary = tool.summarize(args, output)
+        except Exception:  # 요약 실패가 계산 결과를 버리게 두지 않는다
+            summary = f"{tool.name} 실행"
+
+        self.runs.append(
+            ToolRun(
+                name=call.name,
+                arguments=dict(call.arguments or {}),
+                ok=True,
+                summary=summary,
+                output=output,
+            )
+        )
         return ToolResult(call_id=call.id, content=_dump(output))
 
     def _error(self, call: ToolCall, message: str, **extra: Any) -> ToolResult:
         payload = {"오류": message, **extra}
+        self.runs.append(
+            ToolRun(
+                name=call.name,
+                arguments=dict(call.arguments or {}),
+                ok=False,
+                summary=message,
+            )
+        )
         return ToolResult(call_id=call.id, content=_dump(payload), is_error=True)
 
 

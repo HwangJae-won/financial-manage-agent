@@ -536,8 +536,17 @@ def _default_mock_turn(turns: list[Turn], tools: list[ToolSpec]) -> ToolTurn:
     그것을 요약한 텍스트로 마무리한다. **키 없이도 루프가 두 바퀴 도는지** 확인할
     수 있게 하려는 것이다. 인자를 비워 두는 것도 의도적이다 — 도구 계층이 스키마
     오류를 어떻게 돌려주는지가 함께 확인된다.
+
+    판단은 **이번 질문 구간만** 보고 한다. 이력 전체를 보면 두 번째 질문부터는
+    "이미 도구를 썼다"고 보고 계산 없이 답해 버린다. 키 없이 도는 데모에서
+    질문을 이어갈 때 두 번째부터 아무 계산도 하지 않는 화면이 된다.
     """
-    answered = any(turn.tool_results for turn in turns)
+    started = max(
+        (i for i, turn in enumerate(turns) if turn.role == "user" and turn.text),
+        default=-1,
+    )
+    segment = turns[started + 1 :]
+    answered = any(turn.tool_results for turn in segment)
 
     if tools and not answered:
         return ToolTurn(
@@ -548,7 +557,7 @@ def _default_mock_turn(turns: list[Turn], tools: list[ToolSpec]) -> ToolTurn:
             stop_reason="tool_use",
         )
 
-    outputs = [r.content for turn in turns for r in turn.tool_results]
+    outputs = [r.content for turn in segment for r in turn.tool_results]
     summary = outputs[-1][:200] if outputs else "확인할 계산 결과가 없습니다."
     return ToolTurn(
         text=f"[mock 응답] 계산 결과를 확인했습니다: {summary}",
