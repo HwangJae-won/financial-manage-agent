@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>내 자산 AI 네비게이터</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+
+    <header class="site-header">
+      <div class="wrap header-inner">
+        <h1 class="site-title">🧭 내 자산 AI 네비게이터</h1>
+
+        <div class="a11y-controls" role="group" aria-label="화면 설정">
+          <span class="a11y-label">글씨 크기</span>
+          <button type="button" class="chip" data-font="1" aria-pressed="true">보통</button>
+          <button type="button" class="chip" data-font="1.15" aria-pressed="false">크게</button>
+          <button type="button" class="chip" data-font="1.35" aria-pressed="false">아주 크게</button>
+
+          <button type="button" class="chip" id="contrast-toggle" aria-pressed="false">
+            고대비
+          </button>
+          <button type="button" class="chip" id="plain-toggle" aria-pressed="false">
+            쉬운 말
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="tabs wrap" role="tablist" aria-label="화면 선택">
+      <button role="tab" class="tab" data-view="chat" aria-selected="true">상담하기</button>
+      <button role="tab" class="tab" data-view="result" aria-selected="false">내 결과</button>
+      <button role="tab" class="tab" data-view="fraud" aria-selected="false">
+        받은 연락 확인
+      </button>
+    </nav>
+
+    <main id="main" class="wrap">
+      <!-- 상담 -->
+      <section id="view-chat" class="view" role="tabpanel" aria-label="상담하기">
+        <div class="progress-row">
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="12"
+               aria-valuenow="0" aria-label="상담 진행률">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <span class="progress-text" id="progress-text">0 / 12</span>
+        </div>
+
+        <div id="chat-log" class="chat-log" aria-live="polite" aria-atomic="false"></div>
+
+        <form id="chat-form" class="chat-form">
+          <label class="visually-hidden" for="chat-input">답변 입력</label>
+          <textarea id="chat-input" rows="2" placeholder="편하게 말씀해 주세요"
+                    autocomplete="off"></textarea>
+          <button type="submit" class="btn btn-primary" id="chat-send">보내기</button>
+        </form>
+
+        <p class="hint" id="chat-hint"></p>
+
+        <div class="row-actions">
+          <button type="button" class="btn btn-ghost" id="btn-restart">처음부터 다시</button>
+          <button type="button" class="btn btn-secondary hidden" id="btn-see-result">
+            지금 결과 보기
+          </button>
+        </div>
+      </section>
+
+      <!-- 결과 -->
+      <section id="view-result" class="view hidden" role="tabpanel" aria-label="내 결과">
+        <div id="result-empty" class="empty-state">
+          <p>아직 상담이 끝나지 않았습니다.</p>
+          <button type="button" class="btn btn-primary" data-goto="chat">상담 시작하기</button>
+          <p class="hint">
+            또는 예시로 먼저 보실 수 있습니다.
+          </p>
+          <div class="row-actions">
+            <button type="button" class="btn btn-secondary" data-sample="demo">
+              예시 1 · 퇴직금 2억, 60세 퇴직
+            </button>
+            <button type="button" class="btn btn-secondary" data-sample="diversified">
+              예시 2 · 자산 분산형
+            </button>
+          </div>
+        </div>
+
+        <div id="result-body" class="hidden">
+          <div class="briefing card" id="briefing"></div>
+
+          <h2>한눈에 보기</h2>
+          <div class="stat-grid" id="stat-grid"></div>
+
+          <h2>나의 자산지도</h2>
+          <p class="section-note">
+            내 돈이 얼마 있는지가 아니라, 이 돈을 어떤 목적으로 얼마 동안 쓸 것인지를 봅니다.
+          </p>
+          <div id="asset-map"></div>
+
+          <h2>시간에 따른 자산 변화</h2>
+          <div id="balance-chart"></div>
+
+          <h2>은퇴 재무 안정도</h2>
+          <div id="risk-score"></div>
+
+          <h2>선택지 비교</h2>
+          <p class="section-note">
+            하나의 정답을 권하지 않습니다. 예상 결과를 비교하고 직접 판단하세요.
+          </p>
+          <div id="scenarios"></div>
+        </div>
+      </section>
+
+      <!-- 사기 확인 -->
+      <section id="view-fraud" class="view hidden" role="tabpanel" aria-label="받은 연락 확인">
+        <h2>받은 연락 확인하기</h2>
+        <p class="section-note">
+          투자를 권유하는 문자나 카카오톡을 받으셨나요?
+          내용을 그대로 붙여넣으시면 확인이 필요한 부분을 짚어드립니다.
+        </p>
+
+        <form id="fraud-form">
+          <label class="visually-hidden" for="fraud-input">받으신 내용</label>
+          <textarea id="fraud-input" rows="7"
+                    placeholder="받으신 문자나 메시지를 그대로 붙여넣어 주세요."></textarea>
+          <div class="row-actions">
+            <button type="submit" class="btn btn-primary">확인하기</button>
+            <button type="button" class="btn btn-ghost" id="btn-sample-scam">
+              예시 문자로 해보기
+            </button>
+          </div>
+        </form>
+
+        <div id="fraud-result"></div>
+      </section>
+    </main>
+
+    <footer class="wrap site-footer">
+      <p class="disclaimer">
+        ⚠️ <strong>참고용 안내입니다.</strong>
+        세금과 건강보험료는 실효세율 근사치이며, 실제 부담액은 개인의 소득·재산 상황에 따라
+        달라집니다. 투자 수익률은 가정값이며 미래 수익을 보장하지 않습니다.
+        이 서비스는 특정 금융상품의 가입을 권유하지 않습니다.
+      </p>
+      <p class="hint" id="llm-status"></p>
+    </footer>
+
+    <button type="button" id="tts-toggle" class="tts-fab" aria-pressed="false"
+            title="화면 내용을 소리로 읽어드립니다">
+      🔊 읽어주기
+    </button>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
