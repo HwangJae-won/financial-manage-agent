@@ -46,6 +46,12 @@ MONTHLY_SLOTS = {"monthly_expense", "national_pension_monthly", "other_monthly_i
 # "퇴직금은 2억, 예금은 5천" 에서 퇴직금이 5천까지 삼키지 않게 하기 위함.
 _SEGMENT = re.compile(r"[,，]|그리고|이고요|이고|이며|있고")
 
+# "32년 다녔습니다" 처럼 근속연수를 말하는 표현. 퇴직소득세의 핵심 변수라
+# 금액과 같은 문장에 섞여 와도 놓치면 안 된다.
+_SERVICE_YEARS = re.compile(
+    r"(\d{1,2})\s*년\s*(?:정도\s*)?(?:간\s*|동안\s*)?(?:다녔|다니|근무|재직|일했|몸담)"
+)
+
 
 def _last_line(transcript: str, speaker: str) -> str:
     lines = [
@@ -86,6 +92,15 @@ def extract_slots(transcript: str, today_year: int) -> dict[str, Any]:
     result: dict[str, Any] = {}
     denied = any(word in answer for word in NEGATIVE)
 
+    # 근속연수는 어느 질문에 대한 답에서든 나올 수 있다.
+    service = _SERVICE_YEARS.search(answer)
+    if service is not None:
+        result["years_employed"] = int(service.group(1))
+
+    # 금액을 읽기 전에 근속연수 표현을 떼어낸다. "2억 정도요, 32년 다녔습니다" 에서
+    # 금액 파서가 32 를 금액의 일부로 삼켜 2억 32원이 되는 것을 막는다.
+    money_text = _SERVICE_YEARS.sub(" ", answer)
+
     # 1) 질문이 특정된 경우 — 그 질문이 채우는 슬롯을 먼저 시도한다.
     if asked is not None:
         if "birth_year" in asked.fills:
@@ -107,7 +122,7 @@ def extract_slots(transcript: str, today_year: int) -> dict[str, Any]:
             if risk is not None:
                 result["risk_tolerance"] = risk
         else:
-            amount = parse_korean_amount(answer)
+            amount = parse_korean_amount(money_text)
             target = asked.fills[0]
             if amount is not None:
                 result[target] = _scale(target, amount)
@@ -116,7 +131,7 @@ def extract_slots(transcript: str, today_year: int) -> dict[str, Any]:
                     result[field] = 0
 
     # 2) 사용자가 먼저 말한 항목 — 문장을 항목별로 쪼갠 뒤 각 조각에서 금액을 잡는다.
-    for segment in _SEGMENT.split(answer):
+    for segment in _SEGMENT.split(money_text):
         segment = segment.strip()
         if not segment:
             continue

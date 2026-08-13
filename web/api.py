@@ -33,6 +33,7 @@ from core.models import SimulationResult, UserProfile
 from core.montecarlo import MonteCarloResult, run_monte_carlo
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
+from core.severance import SeveranceComparison, compare_severance_options
 from core.policy import (
     DEFAULT_POLICY_KEY,
     PolicyFact,
@@ -141,6 +142,15 @@ class PrescriptionRequest(BaseModel):
     target_age: Optional[int] = Field(
         default=None, ge=60, le=110, description="목표 나이. 생략하면 시뮬레이션 종료 나이"
     )
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
+
+
+class SeveranceRequest(BaseModel):
+    """퇴직금 수령 방식 비교 요청."""
+
+    pension_years: Optional[int] = Field(default=None, ge=1, le=40)
     profile: Optional[UserProfile] = None
     session_id: Optional[str] = None
     sample: Optional[str] = None
@@ -336,6 +346,13 @@ def prescriptions(request: PrescriptionRequest) -> PrescriptionSet:
     """목표 나이까지 유지하려면 무엇을 얼마나 바꿔야 하는지 (기능 ⑤ 확장)."""
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return prescribe(profile, target_age=request.target_age)
+
+
+@app.post("/api/severance", response_model=SeveranceComparison)
+def severance(request: SeveranceRequest) -> SeveranceComparison:
+    """퇴직금을 일시금으로 받을지 연금으로 받을지 (기능 ⑤)."""
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return compare_severance_options(profile, pension_years=request.pension_years)
 
 
 @app.post("/api/sensitivity", response_model=SensitivityReport)

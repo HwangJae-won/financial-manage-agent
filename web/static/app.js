@@ -247,6 +247,7 @@ function renderAnalysis(data) {
   renderRiskScore(data.risk_score);
   renderScenarios(data.scenarios, data.monte_carlo);
   renderEvents(data.profile.life_events || []);
+  loadSeverance();
   loadPrescriptions();
   loadSensitivity();
 }
@@ -531,6 +532,76 @@ function volatilityLabel(volatility) {
 /* ------------------------------------------------------------------ */
 /* 받은 연락 확인                                                       */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 퇴직금 수령 방식                                                      */
+/* ------------------------------------------------------------------ */
+
+async function loadSeverance() {
+  const box = $("#severance");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  try {
+    renderSeverance(
+      await api("/api/severance", {
+        method: "POST",
+        body: JSON.stringify({
+          profile,
+          pension_years: Number($("#pension-years").value),
+        }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderSeverance(result) {
+  const box = $("#severance");
+  box.innerHTML = "";
+  box.appendChild(
+    el("div", `alert ${result.computable ? "alert-ok" : "alert-warn"}`, result.headline),
+  );
+
+  // 근속연수를 모르면 세금이 전부 0으로 나온다. 그 표를 보여주면 '세금이 없다'는
+  // 잘못된 인상을 준다.
+  if (!result.computable) {
+    box.appendChild(el("div", "advice", result.verdict));
+    return;
+  }
+
+  const table = el("table");
+  const thead = el("thead");
+  const header = el("tr");
+  ["항목", result.lump_sum.method, result.pension.method].forEach((text) =>
+    header.appendChild(el("th", null, text)),
+  );
+  thead.appendChild(header);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  [
+    ["세금", "total_tax_label"],
+    ["실효세율", "effective_rate_label"],
+    ["언제 내나", "when_paid"],
+    ["자산 고갈", "depletion_label"],
+    ["마지막 잔액", "final_balance_label"],
+  ].forEach(([label, key]) => {
+    const row = el("tr");
+    row.appendChild(el("td", null, label));
+    row.appendChild(el("td", null, result.lump_sum[key]));
+    row.appendChild(el("td", null, result.pension[key]));
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  box.appendChild(table);
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${result.verdict}`));
+  const notes = el("ul", "hint");
+  result.notes.forEach((note) => notes.appendChild(el("li", null, note)));
+  box.appendChild(notes);
+}
 
 /* ------------------------------------------------------------------ */
 /* 예정된 큰 지출                                                        */
@@ -930,6 +1001,7 @@ async function init() {
   setupEvents();
   setupFraud();
   $("#target-age").addEventListener("change", loadPrescriptions);
+  $("#pension-years").addEventListener("change", loadSeverance);
   loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>

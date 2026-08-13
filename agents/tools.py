@@ -37,6 +37,7 @@ from core.models import LifeEvent, UserProfile
 from core.policy import DEFAULT_POLICY_KEY, analyze_policy_impact, load_policy_catalog
 from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
+from core.severance import compare_severance_options
 from core.sensitivity import analyze_sensitivity
 
 # 금액 인자의 상한. 모델이 자릿수를 잘못 세는 일이 있어서 막아 둔다.
@@ -104,6 +105,12 @@ class SensitivityArgs(_Args):
 class PolicyArgs(_Args):
     policy_key: str = Field(
         default=DEFAULT_POLICY_KEY, description="정책 키. 목록은 도구 설명 참조"
+    )
+
+
+class SeveranceArgs(_Args):
+    pension_years: Optional[int] = Field(
+        default=None, ge=1, le=40, description="연금으로 나눠 받을 기간(년). 생략하면 10년"
     )
 
 
@@ -253,6 +260,35 @@ def _run_policy(
     }
 
 
+def _run_severance(
+    profile: UserProfile, assumptions: Assumptions, args: SeveranceArgs
+) -> dict[str, Any]:
+    result = compare_severance_options(
+        profile, pension_years=args.pension_years, assumptions=assumptions
+    )
+    return {
+        "퇴직금": result.severance_label,
+        "근속연수": result.years_employed,
+        "일시금": {
+            "세금": result.lump_sum.total_tax_label,
+            "실효세율": result.lump_sum.effective_rate_label,
+            "납부시점": result.lump_sum.when_paid,
+            "고갈": result.lump_sum.depletion_label,
+        },
+        "연금": {
+            "세금": result.pension.total_tax_label,
+            "실효세율": result.pension.effective_rate_label,
+            "납부시점": result.pension.when_paid,
+            "고갈": result.pension.depletion_label,
+            "수령기간": f"{result.pension_years}년",
+        },
+        "줄어드는_세금": result.tax_saved_label,
+        "한_문장": result.headline,
+        "결론": result.verdict,
+        "주의": result.notes,
+    }
+
+
 def _run_message(
     profile: UserProfile, assumptions: Assumptions, args: MessageArgs
 ) -> dict[str, Any]:
@@ -290,6 +326,13 @@ def _sum_sensitivity(args: SensitivityArgs, out: dict[str, Any]) -> str:
 
 def _sum_policy(args: PolicyArgs, out: dict[str, Any]) -> str:
     return f"{out['제도']} {out['확정여부']} → {out['한_문장']}"
+
+
+def _sum_severance(args: SeveranceArgs, out: dict[str, Any]) -> str:
+    return (
+        f"퇴직금 {out['퇴직금']} 수령 방식 비교 → 일시금 세금 {out['일시금']['세금']} / "
+        f"연금 {out['연금']['세금']}"
+    )
 
 
 def _sum_message(args: MessageArgs, out: dict[str, Any]) -> str:
@@ -381,6 +424,18 @@ TOOLS: tuple[Tool, ...] = (
         args_model=PolicyArgs,
         handler=_run_policy,
         summarize=_sum_policy,
+    ),
+    Tool(
+        name="severance_options",
+        description=(
+            "퇴직금을 일시금으로 받을 때와 IRP 등으로 연금 수령할 때를 비교한다. "
+            "퇴직소득세는 근속연수공제가 커서 장기근속자는 실효세율이 낮고, 연금으로 "
+            "받으면 30%(11년차부터 40%) 감면된다. '퇴직금 일시금으로 받을까요' 같은 "
+            "질문에 쓴다."
+        ),
+        args_model=SeveranceArgs,
+        handler=_run_severance,
+        summarize=_sum_severance,
     ),
     Tool(
         name="check_message",

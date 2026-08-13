@@ -18,7 +18,7 @@ DEMO_SCRIPT = [
     "1966년 12월생입니다",
     "올해 12월에 퇴직할 예정이에요",
     "생활비는 한 300만원 정도 씁니다",
-    "퇴직금은 2억 정도 나올 것 같아요",
+    "퇴직금은 2억 정도 나올 것 같아요, 32년 다녔습니다",
     "예금이 2천만원 있습니다",
     "국민연금은 월 150만원 정도 나온다고 하더라고요",
     "주식이나 펀드는 없어요",
@@ -367,3 +367,27 @@ def test_sensitivity_names_the_dominant_assumption(client, finished_session):
 
 def test_sensitivity_without_a_profile_is_a_400(client):
     assert client.post("/api/sensitivity", json={}).status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# 퇴직금 수령 방식
+# --------------------------------------------------------------------------- #
+
+
+def test_severance_comparison_for_the_demo_persona(client, finished_session):
+    body = client.post("/api/severance", json={"session_id": finished_session}).json()
+
+    assert body["lump_sum"]["total_tax"] > body["pension"]["total_tax"]
+    assert body["tax_saved"] > 0
+    assert body["headline"]
+    assert body["notes"]
+
+
+def test_severance_respects_the_pension_period(client):
+    ten = client.post("/api/severance", json={"sample": "demo", "pension_years": 10}).json()
+    twenty = client.post("/api/severance", json={"sample": "demo", "pension_years": 20}).json()
+    assert twenty["tax_saved"] > ten["tax_saved"]
+
+
+def test_severance_without_a_profile_is_a_400(client):
+    assert client.post("/api/severance", json={}).status_code == 400

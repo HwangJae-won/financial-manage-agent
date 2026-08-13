@@ -40,6 +40,7 @@ from core.montecarlo import run_monte_carlo
 from core.policy import PolicyImpact, analyze_policy_impact
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
+from core.severance import SeveranceComparison, compare_severance_options
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
 from core.scenarios import build_scenarios, comparison_table
@@ -579,6 +580,53 @@ def render_scenarios(scenarios) -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def render_severance(profile: UserProfile) -> None:
+    """퇴직금을 일시금으로 받을지 연금으로 받을지 (기능 ⑤)."""
+    st.subheader("퇴직금, 일시금과 연금 중 어느 쪽이 나은가")
+    st.caption(
+        "퇴직 시점에 내려야 하는 가장 큰 결정입니다. "
+        "연금으로 받으시면 퇴직소득세가 줄고, 내는 시점도 나뉩니다."
+    )
+
+    pension_years = st.select_slider(
+        "연금 수령 기간", options=[5, 10, 15, 20], value=10
+    )
+    result: SeveranceComparison = compare_severance_options(
+        profile, pension_years=pension_years
+    )
+    if not result.computable:
+        # 근속연수를 모르면 세금이 전부 0으로 나온다. 표를 보여주면 '세금이 없다'는
+        # 잘못된 인상을 준다.
+        st.warning(result.headline)
+        st.info(result.verdict)
+        return
+
+    st.success(result.headline)
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"항목": "세금", result.lump_sum.method: result.lump_sum.total_tax_label,
+                 result.pension.method: result.pension.total_tax_label},
+                {"항목": "실효세율", result.lump_sum.method: result.lump_sum.effective_rate_label,
+                 result.pension.method: result.pension.effective_rate_label},
+                {"항목": "언제 내나", result.lump_sum.method: result.lump_sum.when_paid,
+                 result.pension.method: result.pension.when_paid},
+                {"항목": "자산 고갈", result.lump_sum.method: result.lump_sum.depletion_label,
+                 result.pension.method: result.pension.depletion_label},
+                {"항목": "마지막 잔액", result.lump_sum.method: result.lump_sum.final_balance_label,
+                 result.pension.method: result.pension.final_balance_label},
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.info(f"**이렇게 하세요** — {result.verdict}")
+    for note in result.notes:
+        st.caption(note)
+
+
 def render_prescriptions(profile: UserProfile) -> None:
     """진단 다음에 오는 것 — 그래서 무엇을 하면 되는가."""
     st.subheader("그래서 무엇을 하면 되나")
@@ -743,6 +791,8 @@ def main() -> None:
     render_risk_score(score)
     st.divider()
     render_scenarios(scenarios)
+    st.divider()
+    render_severance(profile)
     st.divider()
     render_prescriptions(profile)
     st.divider()

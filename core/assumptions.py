@@ -56,6 +56,36 @@ class AssetMapAssumption(BaseModel):
     survival_months: int
 
 
+class ServiceDeductionBand(BaseModel):
+    over_years: int
+    base: int
+    per_year: int
+
+
+class DeductionBand(BaseModel):
+    over: int
+    base: int
+    rate: float
+
+
+class TaxBracket(BaseModel):
+    over: int
+    rate: float
+
+
+class RetirementIncomeTaxAssumption(BaseModel):
+    """퇴직소득세 계산 파라미터. 실효세율 근사가 아니라 제도 구조를 그대로 따른다."""
+
+    service_deduction: list[ServiceDeductionBand]
+    converted_deduction: list[DeductionBand]
+    brackets: list[TaxBracket]
+    local_tax_rate: float = 0.10
+    pension_discount: float = 0.30
+    pension_discount_after: float = 0.40
+    pension_discount_after_years: int = 10
+    default_pension_years: int = 10
+
+
 class SensitivityAssumption(BaseModel):
     """민감도 분석에서 각 가정을 흔들어 볼 폭. 기본값은 YAML 이 없을 때만 쓰인다."""
 
@@ -76,6 +106,7 @@ class Assumptions(BaseModel):
     health_insurance: HealthInsuranceAssumption
     pension: PensionAssumption
     asset_map: AssetMapAssumption
+    retirement_income_tax: RetirementIncomeTaxAssumption
     sensitivity: SensitivityAssumption = Field(default_factory=SensitivityAssumption)
 
     def expected_return(self, allocation: dict[str, float]) -> float:

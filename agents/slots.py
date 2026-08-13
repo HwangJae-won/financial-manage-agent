@@ -71,10 +71,15 @@ QUESTIONS: tuple[Question, ...] = (
     ),
     Question(
         key="severance",
-        text="퇴직금은 얼마나 받으셨거나 받으실 것 같으세요?",
-        fills=("severance_pay",),
+        text=(
+            "퇴직금은 얼마나 받으셨거나 받으실 것 같으세요?\n"
+            "몇 년 근무하셨는지도 함께 말씀해 주시면 세금까지 계산해 드립니다."
+        ),
+        # 질문 하나로 슬롯 두 개를 채운다. 근속연수는 퇴직소득세의 핵심 변수인데
+        # (근속연수공제) 질문을 하나 더 늘리는 것은 시니어 대상 서비스에서 비용이 크다.
+        fills=("severance_pay", "years_employed"),
         priority=Priority.IMPORTANT,
-        hint="예: 2억 정도 나올 것 같아요 / 없습니다",
+        hint="예: 2억 정도 나올 것 같아요, 32년 다녔습니다 / 없습니다",
     ),
     Question(
         key="savings",
@@ -149,6 +154,7 @@ DEFAULTS: dict[str, Any] = {
     "birth_month": 1,
     "retirement_month": 12,
     "severance_pay": 0,
+    "years_employed": 0,  # 0 이면 '모름' — 퇴직소득세는 추측하지 않고 계산을 보류한다
     "cash_savings": 0,
     "national_pension_monthly": 0,
     "equity": 0,
@@ -217,6 +223,10 @@ def extraction_schema() -> dict[str, Any]:
         "retirement_month": {"type": ["integer", "null"], "description": "1-12"},
         "monthly_expense": dict(money, description="월 생활비(원)"),
         "severance_pay": dict(money, description="퇴직금(원)"),
+        "years_employed": {
+            "type": ["integer", "null"],
+            "description": "재직(근속) 기간(년). 언급 없으면 null",
+        },
         "cash_savings": dict(money, description="예금·적금(원)"),
         "national_pension_monthly": dict(money, description="국민연금 예상 월 수령액(원)"),
         "equity": dict(money, description="주식·ETF·펀드 평가액(원)"),
