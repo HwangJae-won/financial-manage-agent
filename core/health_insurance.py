@@ -375,7 +375,7 @@ def _first_full_year(rows: list[YearStatus]) -> Optional[YearStatus]:
     return next((row for row in rows if row.active_months == 12), rows[0])
 
 
-def _premium_events(
+def premium_events(
     rows: list[YearStatus], profile: UserProfile, assumptions: Assumptions
 ) -> list[LifeEvent]:
     """보험료를 일회성 지출로 바꾼다.
@@ -383,6 +383,10 @@ def _premium_events(
     `LifeEvent` 금액은 **퇴직 시점 기준**으로 해석되어 엔진이 물가만큼 키운다.
     보험료는 그 해의 명목 소득에서 이미 계산했으므로, 넣기 전에 물가로 되돌린다.
     이 한 줄을 빼먹으면 물가가 두 번 곱해진다.
+
+    공개 함수인 이유: 국민연금 모듈(`core/national_pension.py`)이 연금을 늘렸을 때의
+    건보료를 같은 규칙으로 얹어야 한다. 되돌림 규칙을 두 곳에서 따로 구현하면
+    조용히 어긋난다.
     """
     factors = {
         plan.year: plan.inflation_factor
@@ -576,7 +580,7 @@ def _plan_impact(
     profile: UserProfile, assumptions: Assumptions, rows: list[YearStatus]
 ) -> tuple[Optional[int], Optional[int], int, int]:
     """보험료를 넣기 전과 후의 고갈 시점. 두 시뮬레이션 모두 건보료 근사를 뺀 상태다."""
-    events = _premium_events(rows, profile, assumptions)
+    events = premium_events(rows, profile, assumptions)
     before = simulate(
         profile, assumptions=assumptions, tax_model=financial_income_tax_only
     )

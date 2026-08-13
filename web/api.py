@@ -34,6 +34,7 @@ from core.montecarlo import MonteCarloResult, run_monte_carlo
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
+from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
 from core.policy import (
     DEFAULT_POLICY_KEY,
@@ -172,6 +173,27 @@ class HealthInsuranceRequest(BaseModel):
     )
     has_employed_family: Optional[bool] = Field(
         default=None, description="직장 다니는 배우자·자녀가 있는지"
+    )
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
+
+
+class NationalPensionRequest(BaseModel):
+    """국민연금 임의계속가입·추납 요청.
+
+    가입월수는 화면에서 따로 받는다. 프로파일에 0으로 들어와도 사용자가 여기서
+    알려주면 계산할 수 있어야 하기 때문이다 — 건강보험료의 월 급여와 같은 규약이다.
+    """
+
+    contributed_months: Optional[int] = Field(
+        default=None, ge=0, le=600, description="국민연금 가입월수"
+    )
+    catchup_months: Optional[int] = Field(
+        default=None, ge=0, le=600, description="추납 가능 개월수(납부예외·적용제외 기간)"
+    )
+    monthly_income_base: Optional[int] = Field(
+        default=None, ge=0, description="기준소득월액(원). 생략하면 퇴직 전 월 급여"
     )
     profile: Optional[UserProfile] = None
     session_id: Optional[str] = None
@@ -386,6 +408,18 @@ def health_insurance(request: HealthInsuranceRequest) -> HealthInsuranceReport:
         monthly_salary=request.monthly_salary,
         property_tax_base_override=request.property_tax_base,
         has_employed_family=request.has_employed_family,
+    )
+
+
+@app.post("/api/national-pension", response_model=NationalPensionReport)
+def national_pension(request: NationalPensionRequest) -> NationalPensionReport:
+    """국민연금을 더 내는 게 이득인지 (임의계속가입·추납)."""
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return analyze_national_pension(
+        profile,
+        contributed_months=request.contributed_months,
+        catchup_months=request.catchup_months,
+        monthly_income_base=request.monthly_income_base,
     )
 
 

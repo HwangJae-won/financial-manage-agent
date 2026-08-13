@@ -163,6 +163,36 @@
           </div>
           <div id="health-insurance"></div>
 
+          <h3>국민연금을 더 내는 게 이득일까</h3>
+          <p class="section-note">
+            60세가 지나도 65세까지 계속 내실 수 있고(<strong>임의계속가입</strong>),
+            실직·휴직으로 못 냈던 기간의 보험료를 나중에 내실 수도 있습니다(<strong>추납</strong>).
+            다만 연금이 늘면 <strong>바로 위의 건강보험 피부양자 기준</strong>을 더 빨리 넘습니다.
+            두 가지를 함께 계산했습니다.
+          </p>
+          <div class="row-actions">
+            <label for="np-months">국민연금 가입월수</label>
+            <input
+              id="np-months"
+              type="number"
+              min="0"
+              max="600"
+              step="12"
+              placeholder="공단 앱에서 확인"
+            />
+            <label for="np-catchup">추납 가능 개월수</label>
+            <input
+              id="np-catchup"
+              type="number"
+              min="0"
+              max="600"
+              step="12"
+              placeholder="납부예외였던 기간"
+            />
+            <button id="np-apply" type="button" class="btn btn-secondary">다시 계산</button>
+          </div>
+          <div id="national-pension"></div>
+
           <h3>예정된 큰 지출</h3>
           <p class="section-note">
             자녀 결혼자금, 목돈 의료비, 주택 수리처럼 <strong>한 번에 나가는 큰돈</strong>은

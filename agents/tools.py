@@ -38,6 +38,7 @@ from core.policy import DEFAULT_POLICY_KEY, analyze_policy_impact, load_policy_c
 from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
 from core.health_insurance import analyze_health_insurance
+from core.national_pension import analyze_national_pension
 from core.severance import compare_severance_options
 from core.sensitivity import analyze_sensitivity
 
@@ -131,6 +132,27 @@ class HealthInsuranceArgs(_Args):
     has_employed_family: Optional[bool] = Field(
         default=None,
         description="직장에 다니는 배우자·자녀가 있는지. 모르면 생략",
+    )
+
+
+class NationalPensionArgs(_Args):
+    contributed_months: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=600,
+        description="국민연금 가입월수. 모르면 생략한다 — 추측해서 넣지 말 것",
+    )
+    catchup_months: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=600,
+        description="추납할 수 있는 개월 수(납부예외·적용제외 기간). 모르면 생략",
+    )
+    monthly_income_base: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=MAX_WON,
+        description="기준소득월액(원). 생략하면 퇴직 전 월 급여를 쓴다",
     )
 
 
@@ -349,6 +371,60 @@ def _run_health_insurance(
     }
 
 
+def _option_payload(option) -> dict[str, Any]:
+    """수단 하나를 모델이 인용할 수 있는 형태로. 못 쓰는 수단은 이유만 남긴다."""
+    if not option.available:
+        return {"가능": False, "이유": option.unavailable_reason}
+    return {
+        "가능": True,
+        "더_내는_기간": f"{option.months_added}개월",
+        "내는_돈": option.cost_label,
+        "월_연금_증가": option.monthly_gain_label,
+        "평생_더_받는_금액": option.lifetime_gain_label,
+        "추가_건강보험료": option.extra_premium_label,
+        "빼고_남는_것": option.net_gain_label,
+        "본전_시점": option.breakeven_label,
+        "피부양자_탈락_변화": (
+            f"{option.cliff_shift_years}년 앞당겨짐"
+            if option.cliff_shift_years > 0
+            else "달라지지 않음"
+        ),
+    }
+
+
+def _run_national_pension(
+    profile: UserProfile, assumptions: Assumptions, args: NationalPensionArgs
+) -> dict[str, Any]:
+    result = analyze_national_pension(
+        profile,
+        contributed_months=args.contributed_months,
+        catchup_months=args.catchup_months,
+        monthly_income_base=args.monthly_income_base,
+        assumptions=assumptions,
+    )
+    if not result.computable:
+        return {
+            "계산_가능": False,
+            "한_문장": result.headline,
+            "결론": result.verdict,
+            "주의": result.notes,
+        }
+    return {
+        "계산_가능": True,
+        "가입월수": result.contributed_months,
+        "수급자격": "있음" if result.qualifies_now else f"{result.months_to_qualify}개월 부족",
+        "자격까지_드는_돈": result.cost_to_qualify_label,
+        "지금_월_연금": result.current.monthly_pension_label,
+        "추납": _option_payload(result.catchup),
+        "임의계속가입": _option_payload(result.voluntary),
+        "둘_다": _option_payload(result.both),
+        "가장_나은_선택": result.best_label,
+        "한_문장": result.headline,
+        "결론": result.verdict,
+        "주의": result.notes,
+    }
+
+
 def _run_message(
     profile: UserProfile, assumptions: Assumptions, args: MessageArgs
 ) -> dict[str, Any]:
@@ -399,6 +475,15 @@ def _sum_health_insurance(args: HealthInsuranceArgs, out: dict[str, Any]) -> str
     return (
         f"퇴직 후 건강보험료 → 피부양자 탈락 {out['탈락_시점']} · "
         f"지역가입자 월 {out['지역가입자']['월']}"
+    )
+
+
+def _sum_national_pension(args: NationalPensionArgs, out: dict[str, Any]) -> str:
+    if not out["계산_가능"]:
+        return "국민연금 추가납부 검토 → 가입월수를 몰라 계산하지 않음"
+    return (
+        f"국민연금 추가납부 검토 → 수급자격 {out['수급자격']} · "
+        f"가장 나은 선택 {out['가장_나은_선택']}"
     )
 
 
@@ -516,6 +601,19 @@ TOOLS: tuple[Tool, ...] = (
         args_model=HealthInsuranceArgs,
         handler=_run_health_insurance,
         summarize=_sum_health_insurance,
+    ),
+    Tool(
+        name="national_pension_options",
+        description=(
+            "국민연금을 더 낼지 검토한다. 60세 이후에도 65세까지 계속 내는 임의계속가입과, "
+            "납부예외였던 기간의 보험료를 나중에 내는 추납(최대 119개월)을 각각 계산한다. "
+            "가입기간이 120개월에 못 미치면 노령연금이 평생 0원이라는 점, 연금을 늘리면 "
+            "건강보험 피부양자에서 더 빨리 탈락한다는 점을 함께 돌려준다. "
+            "'국민연금 더 낼까요', '추납하는 게 이득인가요' 같은 질문에 쓴다."
+        ),
+        args_model=NationalPensionArgs,
+        handler=_run_national_pension,
+        summarize=_sum_national_pension,
     ),
     Tool(
         name="check_message",

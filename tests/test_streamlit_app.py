@@ -109,6 +109,7 @@ def test_all_sections_are_present(form_app):
         "대응 시나리오 비교",
         "퇴직금, 일시금과 연금 중 어느 쪽이 나은가",
         "퇴직하면 건강보험료가 얼마나 나오나",
+        "국민연금을 더 내는 게 이득일까",
         "그래서 무엇을 하면 되나",
         "이 결과는 얼마나 믿을 수 있나",
         "제도가 바뀌면 나는 얼마나 달라지나",
@@ -142,6 +143,25 @@ def test_risk_score_shows_the_sustainability_cap(form_app):
     assert values["종합"] == "40 / 100"
     captions = " ".join(c.value for c in form_app.caption)
     assert "종합 점수를 40점으로 제한" in captions
+
+
+def test_national_pension_states_the_health_insurance_tradeoff(form_app):
+    """연금을 늘리면 건보료가 따라온다는 말이 화면에 있어야 한다.
+
+    표만 있으면 '추가 건보료' 칸이 비용 한 줄로 읽히고 지나간다.
+    """
+    values = {m.label: m.value for m in form_app.metric}
+    assert values["가입기간"] == "32년"
+    assert values["수급자격"] == "있음"
+
+    text = " ".join(w.value for w in form_app.warning)
+    assert "건강보험료" in text
+
+
+def test_the_conversation_profile_asks_for_the_months(chat_app):
+    """대화에서는 가입월수를 묻지 않는다. 모르는 채로 계산하지 않고 물어봐야 한다."""
+    warnings = " ".join(w.value for w in chat_app.warning)
+    assert "가입월수를 알려주시면" in warnings
 
 
 def test_changing_expense_updates_the_result():

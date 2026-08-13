@@ -110,6 +110,24 @@ class UserProfile(BaseModel):
     # --- 국민연금 ---
     national_pension_monthly: int = Field(default=0, ge=0, description="국민연금 예상 월 수령액")
     national_pension_start_age: int = Field(default=63, ge=55, le=75, description="국민연금 수령 개시 연령")
+    national_pension_months: int = Field(
+        default=0,
+        ge=0,
+        le=600,
+        description=(
+            "국민연금 가입월수(납부한 개월 수). 임의계속가입·추납으로 연금이 얼마나 "
+            "늘어나는지 계산하는 기준이다. 0이면 '모름' — 추측하지 않고 물어본다."
+        ),
+    )
+    pension_catchup_months: int = Field(
+        default=0,
+        ge=0,
+        le=600,
+        description=(
+            "추납할 수 있는 개월 수 — 실직·휴직으로 납부예외였거나 전업주부로 "
+            "적용제외였던 기간. 0이면 없거나 모르는 상태다."
+        ),
+    )
 
     # --- 예정된 큰 지출 ---
     life_events: list[LifeEvent] = Field(

@@ -87,6 +87,39 @@ class PensionAssumption(BaseModel):
     max_adjust_years: int = Field(default=5, ge=0)
 
 
+class NationalPensionAssumption(BaseModel):
+    """국민연금 임의계속가입·추납 — '얼마나 쌓았나'의 레버.
+
+    기본값을 둔 이유는 다른 항목과 같다. 이 블록이 없는 예전 YAML 도 계속 읽혀야 한다.
+    """
+
+    contribution_rate: float = Field(default=0.09, gt=0.0, le=1.0)
+    min_months: int = Field(default=120, ge=0)
+    contribution_age_limit: int = Field(default=60, ge=0)
+    voluntary_max_age: int = Field(default=65, ge=0)
+    max_catchup_months: int = Field(default=119, ge=0)
+    max_installments: int = Field(default=60, ge=1)
+    base_months: int = Field(default=240, ge=1)
+    accrual_per_year: float = Field(default=0.05, ge=0.0)
+    income_base_max: int = Field(default=6_170_000, gt=0)
+    income_base_min: int = Field(default=390_000, gt=0)
+
+    def period_factor(self, months: int) -> float:
+        """가입월수에 대한 기본연금액 계수 (국민연금법 별표 1).
+
+        240개월을 1.0으로 두고 초과 1년당 5% 가산, 미달 1년당 5% 감액한다.
+        가입기간이 최소기간에 못 미치면 노령연금 자체가 없으므로 0을 돌려준다 —
+        여기서 비례식으로 이어 버리면 "119개월도 절반은 받는다"는 잘못된 답이 나온다.
+        """
+        if months < self.min_months:
+            return 0.0
+        return 1.0 + self.accrual_per_year * (months - self.base_months) / 12.0
+
+    def clamp_income_base(self, amount: int) -> int:
+        """기준소득월액을 상·하한 안으로 자른다. 급여가 상한을 넘어도 보험료는 상한까지다."""
+        return max(self.income_base_min, min(self.income_base_max, amount))
+
+
 class AssetMapAssumption(BaseModel):
     survival_months: int
 
@@ -140,6 +173,9 @@ class Assumptions(BaseModel):
     tax: TaxAssumption
     health_insurance: HealthInsuranceAssumption
     pension: PensionAssumption
+    national_pension: NationalPensionAssumption = Field(
+        default_factory=NationalPensionAssumption
+    )
     asset_map: AssetMapAssumption
     retirement_income_tax: RetirementIncomeTaxAssumption
     sensitivity: SensitivityAssumption = Field(default_factory=SensitivityAssumption)

@@ -41,6 +41,7 @@ from core.policy import PolicyImpact, analyze_policy_impact
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
+from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
@@ -137,6 +138,24 @@ def profile_form() -> UserProfile:
         pension_age = st.number_input(
             "국민연금 개시 연령", 55, 75, base.national_pension_start_age, step=1
         )
+        # 가입월수는 119개월과 120개월이 '연금 0원'과 '평생 연금'을 가르는 값이다.
+        # 근속연수와 같은 규약으로, 0이면 계산하지 않고 물어본다.
+        pension_months = st.number_input(
+            "국민연금 가입월수",
+            0,
+            600,
+            base.national_pension_months,
+            step=12,
+            help="0이면 임의계속가입·추납을 계산하지 않습니다. 공단 앱 '가입내역 조회'에 나옵니다",
+        )
+        catchup_months = st.number_input(
+            "추납 가능 개월수",
+            0,
+            600,
+            base.pension_catchup_months,
+            step=12,
+            help="실직·휴직으로 납부예외였거나 전업주부로 적용제외였던 기간 (최대 119개월)",
+        )
 
     # 이 연령대의 계획을 실제로 흔드는 것은 매달의 생활비가 아니라 한 번에 나가는 큰돈이다.
     with st.expander("예정된 큰 지출이 있으신가요? (자녀 결혼자금·의료비 등)"):
@@ -175,6 +194,8 @@ def profile_form() -> UserProfile:
         other_monthly_income=other_income * MAN,
         national_pension_monthly=pension_monthly * MAN,
         national_pension_start_age=pension_age,
+        national_pension_months=pension_months,
+        pension_catchup_months=catchup_months,
     )
 
 
@@ -715,6 +736,83 @@ def render_health_insurance(profile: UserProfile) -> None:
         st.caption(note.replace("**", ""))
 
 
+def render_national_pension(profile: UserProfile) -> None:
+    """국민연금을 더 낼까 — 임의계속가입과 추납.
+
+    바로 위의 건강보험료 화면과 **붙여 놓는다.** 연금을 늘리면 피부양자에서 더 빨리
+    탈락한다는 것이 이 항목의 핵심이라, 두 화면이 떨어져 있으면 상충이 보이지 않는다.
+    """
+    st.subheader("국민연금을 더 내는 게 이득일까")
+    st.caption(
+        "60세가 지나도 65세까지 계속 낼 수 있고(임의계속가입), 실직·휴직으로 못 냈던 "
+        "기간의 보험료를 나중에 낼 수도 있습니다(추납). 다만 연금이 늘면 바로 위의 "
+        "건강보험 피부양자 기준을 더 빨리 넘습니다. 두 가지를 함께 계산했습니다."
+    )
+
+    report: NationalPensionReport = analyze_national_pension(profile)
+
+    if not report.computable:
+        st.warning(report.headline)
+        st.info(report.verdict)
+        for note in report.notes:
+            st.caption(note.replace("**", ""))
+        return
+
+    if not report.qualifies_now:
+        st.error(report.headline.replace("**", ""))
+    elif report.best_key == "none":
+        st.success(report.headline.replace("**", ""))
+    else:
+        st.warning(report.headline.replace("**", ""))
+
+    cols = st.columns(4)
+    cols[0].metric("가입기간", report.contributed_label)
+    cols[1].metric(
+        "수급자격",
+        "있음" if report.qualifies_now else f"{report.months_to_qualify}개월 부족",
+    )
+    cols[2].metric("지금 월 연금", report.current.monthly_pension_label)
+    cols[3].metric("가장 나은 선택", report.best_label)
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "수단": option.label if option.available else f"{option.label} (해당 없음)",
+                    "더 내는 기간": f"{option.months_added}개월" if option.available else "—",
+                    "내는 돈": option.cost_label if option.available else "—",
+                    "월 연금 증가": option.monthly_gain_label if option.available else "—",
+                    "평생 더 받음": option.lifetime_gain_label if option.available else "—",
+                    "추가 건보료": option.extra_premium_label if option.available else "—",
+                    "빼고 남는 것": option.net_gain_label if option.available else "—",
+                    "본전": option.breakeven_label or "—",
+                }
+                for option in report.options
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    for option in report.options:
+        if not option.available and option.unavailable_reason:
+            st.caption(f"{option.label} — {option.unavailable_reason}")
+
+    # 상충을 문장으로 한 번 더 짚는다. 표만 보면 '건보료' 칸이 그냥 비용으로 읽힌다.
+    shifted = [o for o in report.options if o.available and o.cliff_shift_years > 0]
+    if shifted:
+        worst = max(shifted, key=lambda o: o.cliff_shift_years)
+        st.warning(
+            f"{worst.label}을 선택하시면 건강보험 피부양자 탈락이 "
+            f"{worst.cliff_shift_years}년 앞당겨집니다 "
+            f"({report.current.cliff_year}년 → {worst.cliff_year}년)."
+        )
+
+    st.info(f"**이렇게 하세요** — {report.verdict}")
+    for note in report.notes:
+        st.caption(note.replace("**", ""))
+
+
 def render_prescriptions(profile: UserProfile) -> None:
     """진단 다음에 오는 것 — 그래서 무엇을 하면 되는가."""
     st.subheader("그래서 무엇을 하면 되나")
@@ -883,6 +981,7 @@ def main() -> None:
     render_severance(profile)
     st.divider()
     render_health_insurance(profile)
+    render_national_pension(profile)
     st.divider()
     render_prescriptions(profile)
     st.divider()

@@ -46,6 +46,9 @@ core/            결정론적 계산. LLM·UI 의존성 없음
   policy.py        정책 영향 계산 + 신뢰 표시 (팩트시트를 엔진에 주입)
   prescribe.py     처방 엔진 — 목표에서 역산해 '무엇을 얼마나' 바꿔야 하는지
   sensitivity.py   가정이 틀렸을 때 결과가 얼마나 흔들리는지 (자기검증)
+  severance.py     퇴직금 일시금 vs 연금 — 퇴직소득세를 제도 구조 그대로 계산
+  health_insurance.py  퇴직 후 건강보험료 피부양자 절벽 (연도별 자격 판정)
+  national_pension.py  임의계속가입·추납 — 늘어난 연금에서 건보료를 빼고 남는 것
   formatting.py    억/만원 표기
   samples.py       데모 페르소나
 agents/          LLM 계층. core/ 의 결과를 사람의 말로 옮긴다
@@ -65,7 +68,7 @@ app/             Streamlit UI (데모 안전망 — 웹이 깨져도 돌아간�
 web/             FastAPI + 순수 HTML/CSS/JS 프런트엔드
   api.py           core/agents 를 HTTP 로 감싸는 얇은 어댑터
   static/          빌드 도구 없는 프런트엔드
-tests/           pytest (411개)
+tests/           pytest (505개)
 ```
 
 `schedule.py`가 분리되어 있는 이유: 퇴직월·연금개시월 안분과 물가연동처럼 틀리기

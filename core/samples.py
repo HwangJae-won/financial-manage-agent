@@ -35,6 +35,10 @@ DEMO_PROFILE = UserProfile(
     other_monthly_income=0,
     national_pension_monthly=1_500_000,
     national_pension_start_age=64,
+    # 근속 32년을 그대로 가입기간으로 본다(384개월). 수급 개시가 64세라 임의계속가입은
+    # 65세가 아니라 **64세까지 48개월**만 열린다 — 연금을 받기 시작하면 자격이 사라진다.
+    national_pension_months=384,
+    pension_catchup_months=0,
 )
 
 # 자산 구성이 더 다양한 프로파일 — 자산지도와 시나리오 비교를 보여주기 좋다.
@@ -58,4 +62,8 @@ DIVERSIFIED_PROFILE = UserProfile(
     other_monthly_income=800_000,
     national_pension_monthly=1_700_000,
     national_pension_start_age=64,
+    # 근속 28년(336개월). 중간에 3년 납부예외가 있어 추납 여지가 남아 있는 사람 —
+    # 추납과 임의계속가입을 한 화면에서 비교하기 좋다.
+    national_pension_months=336,
+    pension_catchup_months=36,
 )

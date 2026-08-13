@@ -68,3 +68,29 @@ def fmt_years(years: float | None, *, never_text: str = "고갈되지 않음") -
 def fmt_pct(ratio: float, *, precision: int = 1) -> str:
     """비율(0.18)을 퍼센트 문자열('18.0%')로 변환한다."""
     return f"{ratio * 100:.{precision}f}%"
+
+
+def has_final_consonant(word: str) -> bool:
+    """마지막 글자에 받침이 있는지.
+
+    괄호나 숫자로 끝나는 말이 많아서(예: "기준소득월액(퇴직 전 월 급여)") 뒤에서부터
+    **한글 음절을 찾아** 판정한다. 마지막 글자만 보면 조사가 엉뚱하게 붙는다.
+    """
+    for char in reversed(word):
+        if "가" <= char <= "힣":
+            return (ord(char) - ord("가")) % 28 != 0
+    return False
+
+
+def fmt_euro(word: str) -> str:
+    """조사 '으로/로'를 붙인다 — '임의계속가입으로', '둘 다로'.
+
+    문구를 문자열 조립으로 만들다 보면 '둘 다으로' 같은 것이 화면에 나간다.
+    시니어 사용자에게 읽히는 문장이라 여기서 한 번에 처리한다.
+    """
+    return word + ("으로" if has_final_consonant(word) else "로")
+
+
+def fmt_eul(word: str) -> str:
+    """조사 '을/를'을 붙인다 — '가입월수를', '예상 월 수령액을'."""
+    return word + ("을" if has_final_consonant(word) else "를")

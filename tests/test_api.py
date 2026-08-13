@@ -436,3 +436,51 @@ def test_health_insurance_takes_a_real_property_tax_base(client):
 
 def test_health_insurance_without_a_profile_is_a_400(client):
     assert client.post("/api/health-insurance", json={}).status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# 국민연금 임의계속가입 · 추납
+# --------------------------------------------------------------------------- #
+
+
+def test_national_pension_options_for_the_demo_persona(client):
+    body = client.post("/api/national-pension", json={"sample": "demo"}).json()
+
+    assert body["computable"] is True
+    assert body["qualifies_now"] is True
+    # 수급 개시가 64세라 임의계속가입은 65세가 아니라 64세까지 48개월이다.
+    assert body["voluntary"]["available"] is True
+    assert body["voluntary"]["months_added"] == 48
+    assert body["voluntary"]["extra_premium"] > 0  # 연금이 늘면 건보료가 따라온다
+    assert body["notes"]
+
+
+def test_national_pension_asks_instead_of_guessing_the_months(client):
+    """가입월수를 모르면 계산하지 않는다. 화면에서 알려주면 그때 계산한다."""
+    profile = client.get("/api/samples/demo").json()
+    profile["national_pension_months"] = 0
+
+    body = client.post("/api/national-pension", json={"profile": profile}).json()
+    assert body["computable"] is False
+    assert "알려주시면" in body["headline"]
+
+    with_months = client.post(
+        "/api/national-pension",
+        json={"profile": profile, "contributed_months": 384},
+    ).json()
+    assert with_months["computable"] is True
+    assert with_months["contributed_months"] == 384
+
+
+def test_national_pension_counts_the_catchup_the_caller_supplies(client):
+    body = client.post(
+        "/api/national-pension", json={"sample": "demo", "catchup_months": 36}
+    ).json()
+
+    assert body["catchup"]["available"] is True
+    assert body["catchup"]["months_added"] == 36
+    assert body["both"]["months_added"] == 84
+
+
+def test_national_pension_without_a_profile_is_a_400(client):
+    assert client.post("/api/national-pension", json={}).status_code == 400

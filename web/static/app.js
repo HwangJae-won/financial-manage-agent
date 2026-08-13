@@ -249,6 +249,7 @@ function renderAnalysis(data) {
   renderEvents(data.profile.life_events || []);
   loadSeverance();
   loadHealthInsurance();
+  loadNationalPension();
   loadPrescriptions();
   loadSensitivity();
 }
@@ -712,6 +713,158 @@ function renderHealthInsurance(report) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 국민연금 임의계속가입 · 추납                                            */
+/* ------------------------------------------------------------------ */
+
+async function loadNationalPension() {
+  const box = $("#national-pension");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  // 빈 칸은 0이 아니라 **모름**이다. 0으로 보내면 서버가 '가입기간 0개월'로 계산한다.
+  const count = (sel) => {
+    const raw = $(sel).value.trim();
+    return raw === "" ? null : Number(raw);
+  };
+
+  try {
+    renderNationalPension(
+      await api("/api/national-pension", {
+        method: "POST",
+        body: JSON.stringify({
+          profile,
+          contributed_months: count("#np-months"),
+          catchup_months: count("#np-catchup"),
+        }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderNationalPension(report) {
+  const box = $("#national-pension");
+  box.innerHTML = "";
+  const clean = (text) => (text || "").replace(/\*\*/g, "");
+
+  if (!report.computable) {
+    box.appendChild(el("div", "alert alert-warn", clean(report.headline)));
+    box.appendChild(el("div", "advice", `이렇게 하세요 — ${report.verdict}`));
+    const asked = el("ul", "hint");
+    report.notes.forEach((note) => asked.appendChild(el("li", null, clean(note))));
+    box.appendChild(asked);
+    return;
+  }
+
+  // 수급자격이 없는 것은 '주의'가 아니라 '지금 연금이 0원'이라는 사실이다.
+  const tone = !report.qualifies_now
+    ? "alert-warn"
+    : report.best_key === "none"
+      ? "alert-ok"
+      : "alert-warn";
+  box.appendChild(el("div", `alert ${tone}`, clean(report.headline)));
+
+  const grid = el("div", "stat-grid");
+  [
+    ["가입기간", report.contributed_label, "국민연금을 낸 총 기간"],
+    [
+      "수급자격",
+      report.qualifies_now ? "있음" : `${report.months_to_qualify}개월 부족`,
+      report.qualifies_now
+        ? "최소 120개월을 넘겼습니다"
+        : `채우는 데 ${report.cost_to_qualify_label}`,
+    ],
+    ["지금 월 연금", report.current.monthly_pension_label, "더 내지 않으실 경우"],
+    [
+      "가장 나은 선택",
+      report.best_label,
+      report.best_key === "none" ? "더 내실 이유가 없습니다" : "건보료까지 뺀 기준",
+    ],
+  ].forEach(([label, value, note]) => {
+    const card = el("div", "stat");
+    card.appendChild(el("div", "stat-label", label));
+    card.appendChild(el("div", "stat-value", value));
+    card.appendChild(el("div", "stat-note", note));
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
+
+  const options = [
+    report.current,
+    report.catchup,
+    report.voluntary,
+    report.both,
+  ];
+
+  const table = el("table");
+  const thead = el("thead");
+  const header = el("tr");
+  [
+    "수단",
+    "더 내는 기간",
+    "내는 돈",
+    "월 연금 증가",
+    "평생 더 받음",
+    "추가 건보료",
+    "빼고 남는 것",
+    "본전",
+  ].forEach((text) => header.appendChild(el("th", null, text)));
+  thead.appendChild(header);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  options.forEach((option) => {
+    const row = el("tr");
+    const dash = (text) => (option.available ? text : "—");
+    row.appendChild(
+      el("td", null, option.available ? option.label : `${option.label} (해당 없음)`),
+    );
+    row.appendChild(el("td", null, dash(`${option.months_added}개월`)));
+    row.appendChild(el("td", null, dash(option.cost_label)));
+    row.appendChild(el("td", null, dash(option.monthly_gain_label)));
+    row.appendChild(el("td", null, dash(option.lifetime_gain_label)));
+    row.appendChild(el("td", null, dash(option.extra_premium_label)));
+    row.appendChild(el("td", null, dash(option.net_gain_label)));
+    row.appendChild(el("td", null, option.breakeven_label || "—"));
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  box.appendChild(table);
+
+  const reasons = options.filter((o) => !o.available && o.unavailable_reason);
+  if (reasons.length) {
+    const list = el("ul", "hint");
+    reasons.forEach((o) =>
+      list.appendChild(el("li", null, `${o.label} — ${o.unavailable_reason}`)),
+    );
+    box.appendChild(list);
+  }
+
+  // 표만 보면 '추가 건보료' 칸이 그냥 비용 한 줄로 읽힌다. 상충을 문장으로 한 번 더 짚는다.
+  const shifted = options.filter((o) => o.available && o.cliff_shift_years > 0);
+  if (shifted.length) {
+    const worst = shifted.reduce((a, b) =>
+      b.cliff_shift_years > a.cliff_shift_years ? b : a,
+    );
+    box.appendChild(
+      el(
+        "div",
+        "alert alert-warn",
+        `${worst.label}을 선택하시면 건강보험 피부양자 탈락이 ` +
+          `${worst.cliff_shift_years}년 앞당겨집니다 ` +
+          `(${report.current.cliff_year}년 → ${worst.cliff_year}년).`,
+      ),
+    );
+  }
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${report.verdict}`));
+  const notes = el("ul", "hint");
+  report.notes.forEach((note) => notes.appendChild(el("li", null, clean(note))));
+  box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
 /* 예정된 큰 지출                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -1112,6 +1265,7 @@ async function init() {
   $("#pension-years").addEventListener("change", loadSeverance);
   $("#hi-apply").addEventListener("click", loadHealthInsurance);
   $("#hi-family").addEventListener("change", loadHealthInsurance);
+  $("#np-apply").addEventListener("click", loadNationalPension);
   loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>
