@@ -312,3 +312,114 @@ def test_llm_failure_does_not_break_routing():
 
     routing = classify_intent("애매한 말", client=MockClient(structured_handler=explode))
     assert routing.intent is Intent.PROFILING
+
+
+# --------------------------------------------------------------------------- #
+# Supervisor 배달 (A5) — 분류만 하고 아무 데도 보내지 않던 자리
+# --------------------------------------------------------------------------- #
+
+import datetime as _dt  # noqa: E402
+
+from agents.graph import Supervisor  # noqa: E402
+from agents.mocks import demo_handler  # noqa: E402
+
+CHAT_SCRIPT = [
+    "1966년 12월생입니다",
+    "올해 12월에 퇴직할 예정이에요",
+    "생활비는 한 300만원 정도 씁니다",
+    "퇴직금은 2억 정도 나올 것 같아요, 32년 다녔습니다",
+    "예금이 2천만원 있습니다",
+    "국민연금은 월 150만원 정도 나온다고 하더라고요, 32년 넣었습니다",
+    "주식이나 펀드는 없어요",
+    "퇴직연금도 없습니다",
+    "아파트가 한 채 있는데 5억 정도 합니다",
+    "다른 수입은 없어요",
+    "대출은 없습니다",
+    "원금을 지키는 쪽이 편합니다",
+]
+
+
+def _supervisor() -> Supervisor:
+    client = MockClient(structured_handler=demo_handler(2026))
+    supervisor = Supervisor(client=client, today=_dt.date(2026, 8, 13))
+    supervisor.start()
+    return supervisor
+
+
+@pytest.fixture(scope="module")
+def finished():
+    """대화를 끝까지 마친 Supervisor."""
+    supervisor = _supervisor()
+    for line in CHAT_SCRIPT:
+        supervisor.send(line)
+    return supervisor
+
+
+def test_answers_go_to_profiling_until_the_conversation_ends():
+    supervisor = _supervisor()
+    reply = supervisor.send("1966년 12월생입니다")
+
+    assert reply.kind == "question"
+    assert reply.intent is Intent.PROFILING
+    assert "퇴직은 언제" in reply.text
+    assert not reply.done
+
+
+def test_the_conversation_completes_through_the_supervisor(finished):
+    assert finished.done
+    assert finished.ready
+    assert finished.profile() is not None
+
+
+def test_questions_after_the_result_go_to_the_advisor(finished):
+    """대화가 끝난 뒤의 평범한 질문은 프로파일링이 아니라 상담이다.
+
+    이 갈래가 없으면 대화를 마친 사용자가 무슨 말을 해도 아무 일도 일어나지 않는다.
+    """
+    reply = finished.send("생활비를 50만원 줄이면 어떻게 되나요?")
+
+    assert reply.kind == "advice"
+    assert reply.intent is Intent.RESULT
+    assert reply.advice is not None
+    assert reply.advice.trace  # 실제로 계산을 돌렸다
+    assert "계산이 끝나" in reply.reason  # 왜 그리로 갔는지 화면에 설명된다
+
+
+def test_the_advisor_is_reused_across_follow_ups(finished):
+    """후속 질문이 이어지려면 같은 에이전트여야 한다."""
+    first = finished.advisor()
+    finished.send("그럼 60만원은요?")
+
+    assert finished.advisor() is first
+
+
+def test_result_questions_before_the_result_are_deferred():
+    """계산 전에 결과를 물으면 되묻지 않고 진행 상황을 말한다."""
+    reply = _supervisor().send("결과를 다시 보여주세요")
+
+    assert reply.intent is Intent.RESULT
+    assert reply.kind == "question"
+    assert "계산이 끝난 다음에" in reply.text
+    assert reply.advice is None
+
+
+def test_a_scam_message_still_routes_to_fraud_after_the_result(finished):
+    """상담 중에도 사기 확인은 사기 확인으로 가야 한다."""
+    reply = finished.send(SCAM_TEXT)
+
+    assert reply.kind == "fraud"
+    assert reply.intent is Intent.FRAUD_CHECK
+    assert reply.fraud is not None
+    assert reply.fraud.risk_level is RiskLevel.HIGH
+    assert reply.fraud.profile_notes  # 프로파일이 있으니 자산과 엮어 설명한다
+
+
+def test_the_mock_advisor_answer_is_readable():
+    """키 없이 도는 데모에서 대화창에 원시 JSON 이 뜨면 안 된다."""
+    supervisor = _supervisor()
+    for line in CHAT_SCRIPT:
+        supervisor.send(line)
+    reply = supervisor.send("제 계획은 어떤가요?")
+
+    assert "{" not in reply.text
+    assert "고갈" in reply.text

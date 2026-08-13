@@ -558,13 +558,76 @@ def _default_mock_turn(turns: list[Turn], tools: list[ToolSpec]) -> ToolTurn:
         )
 
     outputs = [r.content for turn in segment for r in turn.tool_results]
-    summary = outputs[-1][:200] if outputs else "확인할 계산 결과가 없습니다."
     return ToolTurn(
-        text=f"[mock 응답] 계산 결과를 확인했습니다: {summary}",
+        text=f"[mock 응답] {_mock_answer(outputs[-1] if outputs else '')}",
         provider=Provider.MOCK.value,
         model="mock",
         stop_reason="end_turn",
     )
+
+
+# 도구 출력에서 사람이 읽을 문장을 찾을 때 먼저 보는 키.
+# 계산 모듈들이 이미 '한 문장 결론'을 만들어 두었으므로 그것을 쓴다.
+_MOCK_PREFERRED = ("한_문장", "결론", "요약", "고갈_여부")
+
+
+def _find_readable(data: Any, keys: tuple[str, ...]) -> Optional[str]:
+    """중첩된 출력에서 사람이 읽을 만한 문장 하나를 찾는다."""
+    if isinstance(data, dict):
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in data.values():
+            found = _find_readable(value, keys)
+            if found:
+                return found
+    return None
+
+
+def _first_value(data: Any) -> Optional[str]:
+    """읽을 만한 키가 없을 때의 최후 수단 — 아무 값이라도 하나 집어 온다.
+
+    실제 도구는 전부 '한_문장' 같은 한국어 결론 키를 들고 있지만, 그렇지 않은
+    출력이 들어와도 mock 이 **도구 결과를 받았다는 사실**은 보여야 한다.
+    """
+    if isinstance(data, dict):
+        for value in data.values():
+            found = _first_value(value)
+            if found:
+                return found
+    elif isinstance(data, (list, tuple)):
+        for value in data:
+            found = _first_value(value)
+            if found:
+                return found
+    elif isinstance(data, (str, int, float)) and not isinstance(data, bool):
+        text = str(data).strip()
+        return text or None
+    return None
+
+
+def _mock_answer(content: str) -> str:
+    """도구 출력을 사람이 읽을 문장으로 옮긴다.
+
+    원시 JSON 을 잘라 붙이던 자리다. 상담 화면이 생기면서 이 문자열이 그대로
+    사용자에게 보이게 되었다 — 키 없이 도는 데모에서 대화창에 중괄호가 뜨면
+    서비스가 고장난 것처럼 보인다.
+
+    문장은 도구 출력에서 그대로 가져온다. 지어내지 않으므로 숫자 검증(A7)도
+    자연히 통과한다.
+    """
+    if not content:
+        return "확인할 계산 결과가 없습니다."
+    try:
+        data = json.loads(content)
+    except (TypeError, ValueError):
+        return "계산 결과를 확인했습니다."
+
+    readable = _find_readable(data, _MOCK_PREFERRED) or _first_value(data)
+    if readable:
+        return f"계산해 보았습니다. {readable}"
+    return "계산 결과를 확인했습니다."
 
 
 def _default_mock_text(prompt: str) -> str:

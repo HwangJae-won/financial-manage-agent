@@ -1,4 +1,4 @@
-"""Supervisor — 사용자 입력을 어느 에이전트로 보낼지 정한다.
+"""Supervisor — 사용자 입력을 어느 에이전트로 보낼지 정하고, 실제로 보낸다.
 
 목적지가 둘 이상이 된 시점(사기 탐지 추가)에 만들었다. 하나뿐일 때 만들었다면
 순수 오버헤드였을 것이다.
@@ -6,17 +6,28 @@
 **규칙이 먼저, LLM 은 애매할 때만.** 사기 탐지 요청은 구조적으로 알아볼 수 있다 —
 남이 보낸 메시지를 통째로 붙여넣기 때문에 길고, 광고성 표현이 들어 있다.
 이런 건 LLM 을 부를 이유가 없다. 빠르고, 공짜고, 왜 그렇게 분류했는지 설명된다.
+
+분류(`classify_intent`)와 배달(`Supervisor`)을 나눠 두었다. 분류는 순수 함수라
+테스트하기 쉽고, 배달은 에이전트 셋을 쥐고 있어야 해서 객체다.
+
+**같은 말이라도 대화가 어디까지 왔느냐에 따라 갈 곳이 다르다.** "생활비를 줄이면
+어때요?"는 프로파일링 중이라면 답변이지만, 결과가 나온 뒤라면 다시 계산해 달라는
+요청이다. 그래서 배달 단계에서 진행 상태를 함께 본다.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from agents.fraud import detect_signals
-from agents.llm import LLMClient
+from agents.advisor import Advisor, AdvisorReply
+from agents.fraud import FraudAssessment, analyze_message, detect_signals
+from agents.llm import LLMClient, get_client
+from agents.profiling import ProfilingAgent
+from core.models import UserProfile
 
 # 붙여넣은 메시지로 보는 길이 기준. 대화형 답변("2억 정도요")은 이보다 훨씬 짧다.
 PASTED_MESSAGE_LENGTH = 80
@@ -137,3 +148,152 @@ def classify_intent(
     return Routing(
         intent=Intent.PROFILING, reason="본인의 정보를 말하는 것으로 봅니다."
     )
+
+
+# --------------------------------------------------------------------------- #
+# 배달 — 분류한 곳으로 실제로 보낸다 (A5)
+# --------------------------------------------------------------------------- #
+
+
+class SupervisorReply(BaseModel):
+    """한 번의 입력에 대한 응답과, **어디로 갔는지**.
+
+    라우팅 결과를 응답에 담아 보내는 이유는 화면에서 보여주기 위해서다. 사용자가
+    사기 문자를 붙여넣었는데 프로파일링 질문이 돌아오면 서비스가 고장난 것처럼
+    보인다. 어디로 갔고 왜 그랬는지가 보이면 그게 설명이 된다.
+    """
+
+    text: str
+    intent: Intent
+    reason: str
+    by_rule: bool = True
+    kind: str = Field(description="question / advice / fraud — 화면이 어떻게 그릴지")
+
+    advice: Optional[AdvisorReply] = None
+    fraud: Optional[FraudAssessment] = None
+    done: bool = False
+    ready: bool = Field(
+        default=False, description="결과를 보여줘도 되는 상태인가"
+    )
+
+
+NOT_READY_YET = (
+    "그 질문은 계산이 끝난 다음에 정확히 답해 드릴 수 있습니다.\n"
+    "몇 가지만 더 여쭙고 바로 정리해 드릴게요."
+)
+
+
+class Supervisor:
+    """대화의 단일 창구. 사용자가 무엇을 말하든 여기로 들어와 여기서 갈린다.
+
+    웹 세션 하나 = Supervisor 하나. 프로파일링이 끝나면 그 프로파일로 상담
+    에이전트를 만들어 이후 질문을 그쪽으로 넘긴다.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: Optional[LLMClient] = None,
+        today: Optional[_dt.date] = None,
+    ):
+        self.client = client or get_client()
+        self.profiler = ProfilingAgent(client=self.client, today=today)
+        self._advisor: Optional[Advisor] = None
+
+    # -- 상태 ------------------------------------------------------------- #
+
+    def start(self) -> str:
+        return self.profiler.start()
+
+    @property
+    def done(self) -> bool:
+        return self.profiler.done
+
+    @property
+    def ready(self) -> bool:
+        return self.profiler.ready
+
+    def profile(self) -> Optional[UserProfile]:
+        """완성된 프로파일. 아직이면 None — 예외로 흐름을 끊지 않는다."""
+        try:
+            return self.profiler.build_profile()
+        except ValueError:
+            return None
+
+    def advisor(self) -> Optional[Advisor]:
+        """상담 에이전트. 프로파일이 준비된 다음에만 생긴다.
+
+        한 번 만들면 계속 쓴다. 대화 이력을 들고 있어야 "그럼 60만원은요?" 같은
+        후속 질문이 이어지기 때문이다.
+        """
+        if self._advisor is None:
+            profile = self.profile()
+            if profile is not None:
+                self._advisor = Advisor(profile, client=self.client)
+        return self._advisor
+
+    # -- 배달 ------------------------------------------------------------- #
+
+    def send(self, text: str) -> SupervisorReply:
+        """입력 하나를 분류하고 해당 에이전트로 보낸다."""
+        routing = self._resolve(classify_intent(text, client=self.client))
+
+        if routing.intent is Intent.FRAUD_CHECK:
+            return self._to_fraud(text, routing)
+        if routing.intent is Intent.RESULT:
+            return self._to_advisor(text, routing)
+        return self._to_profiler(text, routing)
+
+    def _resolve(self, routing: Routing) -> Routing:
+        """진행 상태를 반영해 목적지를 정한다.
+
+        **결과가 나온 뒤의 평범한 질문은 프로파일링이 아니라 상담이다.** 이 한 줄이
+        없으면 대화를 마친 사용자가 무슨 말을 해도 아무 일도 일어나지 않는다.
+
+        바꾼 결과를 `Routing` 에 다시 담아 돌려주는 이유는 화면 때문이다. 분류는
+        'profiling' 인데 상담 답변이 나오면 표시와 실제가 어긋난다 — trace 를
+        보여주는 화면(A4)에서 바로 눈에 띈다.
+        """
+        if routing.intent is Intent.FRAUD_CHECK:
+            return routing
+        if self.done and routing.intent is not Intent.RESULT:
+            return Routing(
+                intent=Intent.RESULT,
+                reason=f"{routing.reason} 계산이 끝나 상담으로 이어갑니다.",
+                by_rule=routing.by_rule,
+            )
+        if not self.done and routing.intent is Intent.RESULT:
+            return routing  # 아직 답할 수 없다 — _to_advisor 가 진행 상황을 말한다
+        return routing
+
+    def _base(self, routing: Routing, kind: str, text: str) -> dict:
+        return {
+            "text": text,
+            "intent": routing.intent,
+            "reason": routing.reason,
+            "by_rule": routing.by_rule,
+            "kind": kind,
+            "done": self.done,
+            "ready": self.ready,
+        }
+
+    def _to_profiler(self, text: str, routing: Routing) -> SupervisorReply:
+        answer = self.profiler.respond(text)
+        return SupervisorReply(**self._base(routing, "question", answer))
+
+    def _to_fraud(self, text: str, routing: Routing) -> SupervisorReply:
+        assessment = analyze_message(text, profile=self.profile())
+        return SupervisorReply(
+            **self._base(routing, "fraud", assessment.summary), fraud=assessment
+        )
+
+    def _to_advisor(self, text: str, routing: Routing) -> SupervisorReply:
+        advisor = self.advisor()
+        if advisor is None:
+            # 결과를 묻는데 아직 계산할 수 없다. 되묻지 않고 진행 상황을 말한다.
+            return SupervisorReply(**self._base(routing, "question", NOT_READY_YET))
+
+        reply = advisor.ask(text)
+        return SupervisorReply(
+            **self._base(routing, "advice", reply.text), advice=reply
+        )
