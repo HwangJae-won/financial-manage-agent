@@ -1,9 +1,12 @@
-"""은퇴 자산 네비게이터 — Streamlit 데모 (W2).
+"""은퇴 자산 네비게이터 — Streamlit 데모.
 
-아직 대화형 프로파일링(W3)은 붙지 않았다. 폼으로 직접 입력받아
-core/ 의 계산 결과를 그대로 보여주는 것이 이 단계의 목표다.
+두 가지 입력 방식을 제공한다:
+  - 대화로 알아보기 (기본): 상담사가 12가지를 여쭙고 프로파일을 채운다
+  - 직접 입력: 폼으로 값을 넣는다. 데모 중 대화가 꼬였을 때의 안전망이므로
+    대화형이 완성된 뒤에도 절대 지우지 않는다.
 
-폼 입력은 W3 이후에도 남겨둔다 — 데모 중 대화가 꼬였을 때의 안전망이다.
+LLM 설정이 잘못돼도 앱은 죽지 않고 mock 으로 떨어진다. 발표 중에 키가
+만료되거나 프로바이더 이름에 오타가 있어도 데모는 끝까지 돌아가야 한다.
 
 실행:
     streamlit run app/streamlit_app.py
@@ -17,10 +20,17 @@ from pathlib import Path
 # `streamlit run` 은 스크립트 디렉터리를 sys.path 에 넣으므로 저장소 루트를 직접 추가한다.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import datetime as _dt
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from agents.config import describe as describe_llm
+from agents.explain import Briefing, explain
+from agents.llm import MockClient, get_client
+from agents.mocks import demo_handler
+from agents.profiling import ProfilingAgent
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_pct, fmt_years
@@ -144,6 +154,112 @@ def analyze(profile_json: str, n_paths: int):
         compute_risk_score(profile),
         build_scenarios(profile, n_paths=n_paths),
     )
+
+
+@st.cache_resource
+def _resolve_client():
+    """LLM 클라이언트를 만든다. 실패하면 mock 으로 떨어진다.
+
+    설정이 잘못됐다고 앱이 통째로 죽으면 안 된다. 발표 중에 키가 만료됐거나
+    프로바이더 이름에 오타가 있어도 데모는 계속되어야 한다.
+    """
+    error: str | None = None
+    try:
+        client = get_client()
+    except Exception as exc:  # 설정 오류·SDK 미설치·키 문제 전부
+        client, error = MockClient(), f"{type(exc).__name__}: {exc}"
+
+    if isinstance(client, MockClient):
+        client.structured_handler = demo_handler(_dt.date.today().year)
+    return client, error
+
+
+def llm_client():
+    return _resolve_client()[0]
+
+
+def llm_status() -> str:
+    """사이드바에 띄울 LLM 상태. 이것도 실패로 앱을 죽이지 않는다."""
+    _, error = _resolve_client()
+    if error:
+        return f"LLM: mock 으로 대체됨 ({error})"
+    try:
+        return describe_llm()
+    except Exception as exc:
+        return f"LLM: 설정 확인 필요 ({exc})"
+
+
+# --------------------------------------------------------------------------- #
+# 대화형 프로파일링
+# --------------------------------------------------------------------------- #
+
+
+def render_conversation() -> UserProfile | None:
+    """대화로 프로파일을 채운다. 완료되면 UserProfile 을 돌려준다."""
+    if "agent" not in st.session_state:
+        agent = ProfilingAgent(client=llm_client())
+        agent.start()
+        st.session_state.agent = agent
+
+    agent: ProfilingAgent = st.session_state.agent
+
+    st.subheader("상담")
+    answered, total = agent.progress
+    st.progress(answered / total, text=f"{answered} / {total}개 확인")
+
+    for message in agent.state.get("messages", []):
+        with st.chat_message("assistant" if message["role"] == "assistant" else "user"):
+            st.markdown(message["content"])
+
+    if not agent.done:
+        question_key = agent.state.get("pending_question")
+        placeholder = "말씀해 주세요"
+        if question_key:
+            from agents.slots import QUESTION_BY_KEY
+
+            hint = QUESTION_BY_KEY[question_key].hint
+            if hint:
+                placeholder = hint
+
+        if answer := st.chat_input(placeholder):
+            agent.respond(answer)
+            st.rerun()
+
+        if agent.ready:
+            st.info("필요한 정보는 모두 확인했습니다. 남은 질문을 건너뛰고 결과를 보셔도 됩니다.")
+            if st.button("지금 결과 보기", type="primary"):
+                st.session_state.skip_rest = True
+                st.rerun()
+
+        if not st.session_state.get("skip_rest"):
+            return None
+
+    try:
+        return agent.build_profile()
+    except ValueError as exc:
+        st.error(str(exc))
+        return None
+
+
+def render_briefing(briefing: Briefing) -> None:
+    st.subheader("상담사의 정리")
+    st.markdown(f"### {briefing.headline}")
+    st.markdown(briefing.situation)
+    st.info(briefing.priority)
+    st.markdown("**이렇게 해보세요**")
+    for step in briefing.next_steps:
+        st.markdown(f"- {step}")
+
+    if briefing.is_verified:
+        st.caption(
+            "✅ 위 설명에 쓰인 숫자는 모두 계산 결과에서 나온 값입니다 "
+            "(AI가 임의로 만든 숫자가 없는지 자동 검사했습니다)."
+        )
+    else:
+        st.warning(
+            "⚠️ 아래 숫자는 계산 결과에서 확인되지 않았습니다: "
+            f"{', '.join(briefing.unverified_numbers)}. 참고만 해주세요."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -366,13 +482,40 @@ def main() -> None:
     st.title("🧭 내 자산 AI 네비게이터")
     st.markdown("**퇴직 후, 내 자산 어떻게 관리해야 할까요?**")
 
-    profile = profile_form()
-
+    mode = st.sidebar.radio(
+        "입력 방식",
+        ["대화로 알아보기", "직접 입력"],
+        help="대화가 막히면 언제든 직접 입력으로 바꾸실 수 있습니다.",
+    )
     n_paths = st.sidebar.select_slider(
         "시뮬레이션 횟수", options=[500, 1_000, 3_000, 5_000], value=3_000
     )
+    status = llm_status()
+    st.sidebar.caption(status)
+    if "대체됨" in status or "확인 필요" in status:
+        st.sidebar.warning("LLM 설정에 문제가 있어 기본 응답으로 동작합니다. .env 를 확인해 주세요.")
+
+    if mode == "대화로 알아보기":
+        profile = render_conversation()
+        if profile is None:
+            return
+        st.divider()
+    else:
+        profile = profile_form()
 
     sim, amap, mc, score, scenarios = analyze(profile.model_dump_json(), n_paths)
+
+    if mode == "대화로 알아보기":
+        briefing = explain(
+            profile, sim, amap, score=score, monte_carlo=mc, client=llm_client()
+        )
+        render_briefing(briefing)
+        if profile.assumed_fields:
+            st.caption(
+                f"말씀하지 않으신 {len(profile.assumed_fields)}개 항목은 "
+                "기본값으로 가정했습니다. 왼쪽에서 '직접 입력'으로 바꾸면 수정하실 수 있습니다."
+            )
+        st.divider()
 
     render_headline(profile, sim, amap)
     st.divider()

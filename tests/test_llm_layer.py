@@ -34,7 +34,13 @@ SLOT_SCHEMA = {
 
 @pytest.fixture
 def clean_env(monkeypatch, tmp_path):
-    """.env 와 환경변수를 격리한다."""
+    """.env 와 환경변수를 격리한다.
+
+    load_env(override=True) 는 os.environ 에 직접 쓰므로 monkeypatch 만으로는
+    되돌려지지 않는다. 스냅샷을 떠서 테스트가 끝나면 통째로 복원한다 —
+    안 그러면 여기서 설정한 프로바이더가 다른 테스트의 앱을 죽인다.
+    """
+    snapshot = dict(os.environ)
     for key in [
         "FINAGENT_LLM_PROVIDER",
         "ANTHROPIC_API_KEY",
@@ -45,7 +51,12 @@ def clean_env(monkeypatch, tmp_path):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(cfg, "ENV_PATH", tmp_path / ".env")
     cfg.describe.cache_clear()
-    return tmp_path
+
+    yield tmp_path
+
+    os.environ.clear()
+    os.environ.update(snapshot)
+    cfg.describe.cache_clear()
 
 
 # --------------------------------------------------------------------------- #

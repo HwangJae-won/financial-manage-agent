@@ -18,7 +18,7 @@
 |---|---|---|
 | W1 | 계산 엔진 (자산지도 + 캐시플로우 시뮬레이션) | ✅ 완료 |
 | W2 | 몬테카를로 + 시나리오 비교 + 리스크 스코어 + Streamlit | ✅ 완료 |
-| W3–4 | LangGraph 대화형 프로파일링 + 설명 에이전트 (MVP 완성) | 예정 |
+| W3–4 | LangGraph 대화형 프로파일링 + 설명 에이전트 (MVP 완성) | ✅ 완료 |
 | W5 | 금융사기·불완전판매 탐지 | 예정 |
 | W6 | FastAPI + 웹 프론트 (시니어 접근성) | 예정 |
 | W7 | 정책 영향 분석 + 근거/확정여부 표시 | 예정 |
@@ -40,10 +40,17 @@ core/            결정론적 계산. LLM·UI 의존성 없음
   risk_score.py    은퇴 재무 안정도 점수
   formatting.py    억/만원 표기
   samples.py       데모 페르소나
-agents/          LangGraph 대화 계층 (W3~)
+agents/          LLM 계층. core/ 의 결과를 사람의 말로 옮긴다
+  config.py        .env 로더, 프로바이더 결정 (anthropic/openai/mock)
+  llm.py           세 프로바이더를 같은 인터페이스로 감싼다
+  slots.py         질문 12개와 우선순위
+  parsing.py       한국어 금액·연도 파서
+  profiling.py     LangGraph 대화형 프로파일링
+  explain.py       브리핑 생성 + 숫자 검증
+  mocks.py         키 없이 도는 추출기·브리핑
 data/            가정값·룰 YAML. 모든 숫자에 근거 주석 필수
 app/             Streamlit UI
-tests/           pytest (118개)
+tests/           pytest (217개)
 ```
 
 `schedule.py`가 분리되어 있는 이유: 퇴직월·연금개시월 안분과 물가연동처럼 틀리기
@@ -123,3 +130,29 @@ streamlit run app/streamlit_app.py
 
 DEMO 하나로는 시나리오 비교 표가 전부 같은 값이라 데모가 되지 않는다.
 발표에서는 두 인물을 이어서 보여주는 구성이 필요하다.
+
+## LLM 연결
+
+`.env` 한 줄로 프로바이더를 바꾼다. 키가 없으면 자동으로 mock 이 되고,
+설정이 잘못돼도 앱은 죽지 않고 mock 으로 떨어진다.
+
+```
+FINAGENT_LLM_PROVIDER=anthropic   # anthropic | openai | mock (비우면 자동)
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+연결 확인: `python scripts/smoke_llm.py`
+
+**구독은 API 사용권이 아니다.** Claude Max 도 ChatGPT Plus 도 API 결제는 별도다
+(console.anthropic.com / platform.openai.com). OpenAI 는 모델 ID 라인업이 자주
+바뀌므로 기본값을 두지 않았다 — `OPENAI_MODEL` 을 직접 지정해야 한다.
+
+### LLM 이 숫자를 지어내지 못하게 하는 두 겹의 방어
+
+1. **사전** — 프롬프트에 계산 결과를 사실 목록으로 넣고 그 안의 숫자만 쓰라고 지시
+2. **사후** — 생성된 문장의 모든 숫자가 사실 목록에 있는지 기계적으로 검사
+   (`agents/explain.py` 의 `verify_numbers`)
+
+2번이 핵심이다. 프롬프트 지시는 지켜지지 않을 수 있지만 검사는 확실하다.
+검증에 걸린 숫자는 화면에 경고로 표시된다. 기획서 ⑧ "AI 금융정보 신뢰 검증"을
+가장 값싸고 확실하게 구현한 형태다.

@@ -161,3 +161,89 @@ def korean_slot_extractor(today_year: int):
         return {field: extracted.get(field) for field in schema.get("properties", {})}
 
     return handler
+
+
+# --------------------------------------------------------------------------- #
+# 브리핑 — 키 없이도 결과 화면이 채워지도록
+# --------------------------------------------------------------------------- #
+
+
+def _fact(prompt: str, label: str) -> str:
+    """프롬프트의 사실 목록에서 값을 꺼낸다."""
+    match = re.search(rf"^- {re.escape(label)}: (.+)$", prompt, re.M)
+    return match.group(1).strip() if match else ""
+
+
+def briefing_from_facts(prompt: str, schema: dict[str, Any], system: Optional[str]) -> dict[str, Any]:
+    """계산 결과를 그대로 문장에 끼워 넣는 결정론적 브리핑.
+
+    LLM 흉내를 내려는 게 아니라, 사실 목록의 값만 쓰기 때문에 숫자 검증을
+    항상 통과한다. 발표 당일 LLM 이 막혔을 때 그대로 화면에 띄울 수 있다.
+    """
+    gap = _fact(prompt, "소득공백기")
+    coverage = _fact(prompt, "연금·기타소득 없이 생활비를 감당할 수 있는 기간")
+    depletion = _fact(prompt, "금융자산이 바닥나는 시점")
+    shortfall = _fact(prompt, "소득공백기 생활비 부족액")
+    total = _fact(prompt, "총자산")
+    liquid = _fact(prompt, "바로 쓸 수 있는 돈")
+    pension_year = _fact(prompt, "국민연금 개시 연도")
+    weakest = _fact(prompt, "가장 취약한 항목")
+
+    has_shortfall = shortfall and not shortfall.startswith("없음")
+
+    if has_shortfall:
+        headline = "소득공백기 생활비 확보가 가장 급합니다."
+        priority = (
+            f"지금 가장 중요한 것은 생활비를 담을 유동자산 확보입니다. "
+            f"소득공백기 생활비가 {shortfall} 부족합니다. "
+            "투자보다 먼저 이 부분을 채우시는 것이 좋습니다."
+        )
+    elif "바닥나지 않음" not in depletion:
+        headline = "단기는 안정적이지만 장기 대비가 필요합니다."
+        priority = (
+            f"소득공백기는 넘기실 수 있습니다. 다만 현재 계획대로면 {depletion}에 "
+            "금융자산이 바닥납니다. 장기적으로 쓸 수 있는 소득을 늘리거나 "
+            "생활비를 조정하는 검토가 필요합니다."
+        )
+    else:
+        headline = "현재 계획은 안정적으로 유지될 수 있습니다."
+        priority = (
+            "지금 계획대로면 자산이 오래 유지됩니다. "
+            "무리한 변경보다는 현재 구성을 지키시는 것이 좋습니다."
+        )
+
+    situation = (
+        f"현재 총자산은 {total}이고, 이 가운데 바로 쓸 수 있는 돈은 {liquid}입니다. "
+        f"국민연금은 {pension_year}부터 받으시게 되어, 그때까지 {gap}의 소득공백기가 있습니다. "
+        f"연금이나 다른 소득 없이 지금 자산만으로 생활하신다면 {coverage} 정도 가능합니다."
+    )
+
+    steps = [
+        f"소득공백기 {gap} 동안 쓸 생활비를 언제든 찾을 수 있는 곳에 따로 두세요.",
+        "국민연금 예상 수령액을 공단에서 다시 확인해 보세요.",
+    ]
+    if weakest:
+        steps.append(f"가장 약한 부분은 {weakest}입니다. 이 항목부터 살펴보세요.")
+
+    return {
+        "headline": headline,
+        "situation": situation,
+        "priority": priority,
+        "next_steps": steps,
+    }
+
+
+def demo_handler(today_year: int):
+    """프로파일링과 브리핑을 한 클라이언트에서 처리하는 핸들러.
+
+    프롬프트 모양을 보고 어느 쪽인지 판단한다. Streamlit 데모가 키 없이
+    처음부터 끝까지 돌아가게 하는 것이 목적이다.
+    """
+    extractor = korean_slot_extractor(today_year)
+
+    def handler(prompt: str, schema: dict[str, Any], system: Optional[str]) -> dict[str, Any]:
+        if "[계산 결과]" in prompt:
+            return briefing_from_facts(prompt, schema, system)
+        return extractor(prompt, schema, system)
+
+    return handler
