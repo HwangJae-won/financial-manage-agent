@@ -1,0 +1,10 @@
+[project]
+name = "financial-agent"
+version = "0.1.0"
+description = "은퇴 시니어를 위한 내 자산 AI 네비게이터"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
