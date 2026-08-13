@@ -351,6 +351,7 @@ function renderAnalysis(data) {
   loadSeverance();
   loadHealthInsurance();
   loadNationalPension();
+  loadFamilyReport();
   loadPrescriptions();
   loadSensitivity();
 }
@@ -963,6 +964,89 @@ function renderNationalPension(report) {
   const notes = el("ul", "hint");
   report.notes.forEach((note) => notes.appendChild(el("li", null, clean(note))));
   box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
+/* 가족에게 보여줄 한 장                                                  */
+/* ------------------------------------------------------------------ */
+
+async function loadFamilyReport() {
+  const box = $("#family-report");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  try {
+    renderFamilyReport(
+      await api("/api/family-report", {
+        method: "POST",
+        body: JSON.stringify({ profile }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderFamilyReport(report) {
+  const box = $("#family-report");
+  box.innerHTML = "";
+
+  box.appendChild(el("p", "hint", report.subject));
+  box.appendChild(
+    el("div", `alert ${report.now.length ? "alert-warn" : "alert-ok"}`, report.headline),
+  );
+  box.appendChild(el("p", "section-note", report.summary));
+
+  const block = (title, items) => {
+    if (!items.length) return;
+    box.appendChild(el("h4", null, title));
+    items.forEach((item) => {
+      const card = el("div", "card");
+      card.appendChild(
+        el("div", "stat-label", item.value ? `${item.title} — ${item.value}` : item.title),
+      );
+      if (item.detail) card.appendChild(el("div", "stat-note", item.detail));
+      // 기한은 눈에 띄어야 한다. 놓치면 되돌릴 수 없는 것들이다.
+      if (item.deadline) card.appendChild(el("div", "alert alert-warn", `⏰ ${item.deadline}`));
+      box.appendChild(card);
+    });
+  };
+
+  block("기한이 있는 것 — 놓치면 되돌릴 수 없습니다", report.now);
+  block("천천히 보셔도 되는 것", report.later);
+  block("하지 않으셔도 되는 것", report.not_needed);
+
+  if (report.watch_outs.length) {
+    box.appendChild(el("h4", null, "가족이 함께 봐 주실 것"));
+    const list = el("ul", "hint");
+    report.watch_outs.forEach((note) => list.appendChild(el("li", null, note)));
+    box.appendChild(list);
+  }
+
+  const notes = el("ul", "hint");
+  [...report.assumptions, ...report.limits].forEach((note) =>
+    notes.appendChild(el("li", null, note)),
+  );
+  box.appendChild(notes);
+
+  // 실제 공유 경로는 카톡이다. 화면을 캡처해 보내면 숫자만 남고 단서가 사라진다.
+  const share = el("details", "trace");
+  share.appendChild(el("summary", null, "문자·카톡으로 보낼 수 있게 글로 보기"));
+  const text = el("pre", "share-text", report.as_text);
+  share.appendChild(text);
+  const copy = el("button", "btn btn-secondary", "글 복사하기");
+  copy.type = "button";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(report.as_text);
+      copy.textContent = "복사했습니다";
+    } catch (_) {
+      // 클립보드 권한이 없으면 직접 선택하시게 둔다 — 실패를 숨기지 않는다.
+      copy.textContent = "복사가 안 됩니다. 글을 직접 선택해 주세요";
+    }
+  });
+  share.appendChild(copy);
+  box.appendChild(share);
 }
 
 /* ------------------------------------------------------------------ */

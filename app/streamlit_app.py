@@ -41,6 +41,7 @@ from core.montecarlo import run_monte_carlo
 from core.policy import PolicyImpact, analyze_policy_impact
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
+from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
@@ -1021,6 +1022,57 @@ def render_policy_impact(profile: UserProfile) -> None:
     st.caption(fact.trust_note)
 
 
+def render_family_report(profile: UserProfile) -> None:
+    """가족에게 보여줄 한 장 (기능 5).
+
+    시니어의 금융 결정은 혼자 내려지지 않는다. 지금까지 만든 것은 전부 본인
+    화면이었고, 가족은 그것을 보지 못한다. 여기가 나머지 기능의 결과를 담는
+    그릇이다.
+    """
+    st.subheader("가족에게 보여줄 한 장")
+    st.caption(
+        "자녀나 배우자와 함께 보시라고 정리했습니다. "
+        "기한이 있는 것을 맨 위에 두었고, 하지 않으셔도 되는 것도 함께 적었습니다."
+    )
+
+    report: FamilyReport = build_family_report(profile)
+
+    st.markdown(f"**{report.subject}**")
+    if report.now:
+        st.warning(report.headline)
+    else:
+        st.success(report.headline)
+    st.caption(report.summary)
+
+    def block(title: str, items, tone) -> None:
+        if not items:
+            return
+        st.markdown(f"**{title}**")
+        for item in items:
+            with st.container(border=True):
+                st.markdown(f"**{item.title}** — {item.value}" if item.value else f"**{item.title}**")
+                if item.detail:
+                    st.caption(item.detail)
+                if item.deadline:
+                    tone(f"⏰ {item.deadline}")
+
+    block("기한이 있는 것 — 놓치면 되돌릴 수 없습니다", report.now, st.warning)
+    block("천천히 보셔도 되는 것", report.later, st.info)
+    block("하지 않으셔도 되는 것", report.not_needed, st.info)
+
+    if report.watch_outs:
+        st.markdown("**가족이 함께 봐 주실 것**")
+        for note in report.watch_outs:
+            st.caption(f"· {note}")
+
+    for note in report.assumptions:
+        st.caption(f"※ {note}")
+
+    # 실제 공유 경로는 카톡이다. 화면을 캡처해 보내면 숫자만 남고 단서가 사라진다.
+    with st.expander("문자·카톡으로 보낼 수 있게 글로 보기"):
+        st.code(report.as_text, language=None)
+
+
 def main() -> None:
     st.title("🧭 내 자산 AI 네비게이터")
     st.markdown("**퇴직 후, 내 자산 어떻게 관리해야 할까요?**")
@@ -1095,6 +1147,8 @@ def main() -> None:
     render_sensitivity(profile)
     st.divider()
     render_policy_impact(profile)
+    st.divider()
+    render_family_report(profile)
 
     # 결과를 다 본 뒤에 온다. 여기서부터는 사용자가 묻고 에이전트가 계산한다.
     if mode == "대화로 알아보기" and isinstance(st.session_state.get("agent"), Supervisor):

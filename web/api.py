@@ -34,6 +34,7 @@ from core.models import SimulationResult, UserProfile
 from core.montecarlo import MonteCarloResult, run_monte_carlo
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
+from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
@@ -454,6 +455,17 @@ def national_pension(request: NationalPensionRequest) -> NationalPensionReport:
         catchup_months=request.catchup_months,
         monthly_income_base=request.monthly_income_base,
     )
+
+
+@app.post("/api/family-report", response_model=FamilyReport)
+def family_report(request: SensitivityRequest) -> FamilyReport:
+    """가족에게 보여줄 한 장 (기능 5).
+
+    요청 형태가 민감도 분석과 같다(프로파일만 있으면 된다). 모델을 하나 더
+    만들지 않고 같은 것을 쓴다.
+    """
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return build_family_report(profile)
 
 
 @app.post("/api/sensitivity", response_model=SensitivityReport)

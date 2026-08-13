@@ -335,6 +335,22 @@ body.high-contrast .trace {
   border-width: 2px;
 }
 
+/* 카톡으로 보낼 평문. 줄바꿈이 유지되어야 그대로 붙여넣을 수 있다. */
+.share-text {
+  margin: 0.6rem 0;
+  padding: 0.8rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
 .chat-form {
   display: flex;
   gap: 0.6rem;

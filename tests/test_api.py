@@ -539,3 +539,31 @@ def test_national_pension_counts_the_catchup_the_caller_supplies(client):
 
 def test_national_pension_without_a_profile_is_a_400(client):
     assert client.post("/api/national-pension", json={}).status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# 가족 공유 리포트
+# --------------------------------------------------------------------------- #
+
+
+def test_family_report_for_the_demo_persona(client):
+    body = client.post("/api/family-report", json={"sample": "demo"}).json()
+
+    assert body["now"]  # 기한이 있는 것이 있다
+    assert all(item["deadline"] for item in body["now"])
+    assert body["limits"]
+    assert "[기한]" in body["as_text"]
+
+
+def test_family_report_from_the_conversation(client, finished_session):
+    """대화 경로로도 같은 리포트가 나와야 한다."""
+    body = client.post(
+        "/api/family-report", json={"session_id": finished_session}
+    ).json()
+
+    assert "1966년생" in body["subject"]
+    assert body["as_text"]
+
+
+def test_family_report_without_a_profile_is_a_400(client):
+    assert client.post("/api/family-report", json={}).status_code == 400
