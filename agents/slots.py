@@ -90,11 +90,17 @@ QUESTIONS: tuple[Question, ...] = (
     ),
     Question(
         key="pension",
-        text="국민연금은 매달 얼마나 받으실 것 같으세요? "
-        "국민연금공단 홈페이지나 앱에서 예상 수령액을 확인하실 수 있습니다.",
-        fills=("national_pension_monthly",),
+        text=(
+            "국민연금은 매달 얼마나 받으실 것 같으세요? "
+            "국민연금공단 홈페이지나 앱에서 예상 수령액을 확인하실 수 있습니다.\n"
+            "몇 년 동안 납부하셨는지도 함께 말씀해 주시면 더 내실지까지 계산해 드립니다."
+        ),
+        # 퇴직금 질문과 같은 방식이다. 가입월수는 임의계속가입·추납 계산의 핵심 변수인데
+        # (119개월과 120개월이 '연금 0원'과 '평생 연금'을 가른다) 질문을 하나 더
+        # 늘리는 것은 시니어 대상 서비스에서 비용이 크다.
+        fills=("national_pension_monthly", "national_pension_months"),
         priority=Priority.IMPORTANT,
-        hint="예: 월 150만원 정도라고 나왔어요",
+        hint="예: 월 150만원 정도라고 나왔어요, 32년 넣었습니다",
     ),
     Question(
         key="investments",
@@ -157,6 +163,7 @@ DEFAULTS: dict[str, Any] = {
     "years_employed": 0,  # 0 이면 '모름' — 퇴직소득세는 추측하지 않고 계산을 보류한다
     "cash_savings": 0,
     "national_pension_monthly": 0,
+    "national_pension_months": 0,  # 0 이면 '모름' — 임의계속가입·추납은 계산을 보류한다
     "equity": 0,
     "isa": 0,
     "pension_dc": 0,
@@ -229,6 +236,16 @@ def extraction_schema() -> dict[str, Any]:
         },
         "cash_savings": dict(money, description="예금·적금(원)"),
         "national_pension_monthly": dict(money, description="국민연금 예상 월 수령액(원)"),
+        "national_pension_months": {
+            "type": ["integer", "null"],
+            "description": (
+                "국민연금 가입(납부) 기간을 **개월 수**로. '32년 넣었다' 면 384, "
+                "'10년' 이면 120. 언급 없으면 null"
+            ),
+        },
+        "last_monthly_salary": dict(
+            money, description="퇴직 전 월 급여·보수월액(원). 언급 없으면 null"
+        ),
         "equity": dict(money, description="주식·ETF·펀드 평가액(원)"),
         "isa": dict(money, description="ISA 계좌 평가액(원)"),
         "pension_dc": dict(money, description="퇴직연금·IRP 적립금(원)"),

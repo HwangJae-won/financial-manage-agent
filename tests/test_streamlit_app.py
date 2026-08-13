@@ -24,7 +24,7 @@ DEMO_SCRIPT = [
     "생활비는 한 300만원 정도 씁니다",
     "퇴직금은 2억 정도 나올 것 같아요, 32년 다녔습니다",
     "예금이 2천만원 있습니다",
-    "국민연금은 월 150만원 정도 나온다고 하더라고요",
+    "국민연금은 월 150만원 정도 나온다고 하더라고요, 32년 넣었습니다",
     "주식이나 펀드는 없어요",
     "퇴직연금도 없습니다",
     "아파트가 한 채 있는데 5억 정도 합니다",
@@ -158,10 +158,28 @@ def test_national_pension_states_the_health_insurance_tradeoff(form_app):
     assert "건강보험료" in text
 
 
-def test_the_conversation_profile_asks_for_the_months(chat_app):
-    """대화에서는 가입월수를 묻지 않는다. 모르는 채로 계산하지 않고 물어봐야 한다."""
+def test_the_conversation_reaches_the_national_pension_screen(chat_app):
+    """대화만으로 국민연금 화면이 실제 숫자를 내야 한다.
+
+    데모의 첫 장면은 대화다. 여기서 "알려주시면 계산해 드립니다"만 나오면
+    최근에 만든 기능이 데모 주경로에서 보이지 않는다.
+    """
+    values = {m.label: m.value for m in chat_app.metric}
+    assert values["가입기간"] == "32년"
+    assert values["수급자격"] == "있음"
+
     warnings = " ".join(w.value for w in chat_app.warning)
-    assert "가입월수를 알려주시면" in warnings
+    assert "가입월수를 알려주시면" not in warnings
+
+
+def test_the_conversation_derives_the_salary_without_asking(chat_app):
+    """퇴직 전 급여는 묻지 않고 퇴직금 ÷ 근속연수로 끌어낸다.
+
+    2억 ÷ 32년 = 월 625만원. 폼에 직접 넣은 예시 인물과 같은 값이라
+    두 경로가 같은 화면을 낸다.
+    """
+    values = {m.label: m.value for m in chat_app.metric}
+    assert values["가장 나은 선택"] == "임의계속가입"
 
 
 def test_changing_expense_updates_the_result():

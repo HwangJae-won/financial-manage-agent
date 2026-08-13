@@ -226,6 +226,30 @@ def build_graph(client: Optional[LLMClient] = None):
 # --------------------------------------------------------------------------- #
 
 
+def _derive_monthly_salary(values: dict[str, Any]) -> Optional[int]:
+    """퇴직금과 근속연수에서 퇴직 전 월 급여를 끌어낸다.
+
+    퇴직금의 법정 산식이 **30일분 평균임금 × 계속근로연수**이므로
+    (근로자퇴직급여 보장법 제8조), 퇴직금 ÷ 근속연수가 곧 30일분 평균임금이다.
+    지어낸 값이 아니라 유도값이다.
+
+    그래도 `assumed_fields` 에 남긴다. 명예퇴직금이 섞여 있거나 중간정산 이력이
+    있으면 어긋나기 때문이다 — 화면이 '가정한 값'으로 표시해 사용자가 바로잡는다.
+
+    사용자가 직접 급여를 말했으면 건드리지 않는다. 두 값 중 하나라도 없으면
+    끌어낼 수 없으므로 None 을 돌려주고, 그러면 건강보험·국민연금 화면이
+    '알려주시면 계산해 드립니다' 경로로 간다.
+    """
+    if values.get("last_monthly_salary"):
+        return None
+
+    severance = values.get("severance_pay") or 0
+    years = values.get("years_employed") or 0
+    if severance <= 0 or years <= 0:
+        return None
+    return int(severance / years)
+
+
 def build_profile(slots: dict[str, Any]) -> UserProfile:
     """수집한 슬롯으로 UserProfile 을 만든다.
 
@@ -248,6 +272,13 @@ def build_profile(slots: dict[str, Any]) -> UserProfile:
     values["national_pension_start_age"] = assumptions.national_pension_start_age(
         values["birth_year"]
     )
+
+    # 퇴직 전 월 급여도 묻지 않는다. 질문을 하나 더 늘리는 대신 이미 받은 두 값에서
+    # 끌어낸다 — 퇴직금은 법정 산식이 '30일분 평균임금 × 계속근로연수'다.
+    salary = _derive_monthly_salary(values)
+    if salary is not None:
+        values["last_monthly_salary"] = salary
+        assumed.append("last_monthly_salary")
 
     allowed = set(UserProfile.model_fields)
     payload = {k: v for k, v in values.items() if k in allowed}

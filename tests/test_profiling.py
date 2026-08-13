@@ -155,7 +155,7 @@ def test_full_conversation_produces_a_valid_profile(agent: ProfilingAgent):
         "생활비는 한 300만원 정도 씁니다",
         "퇴직금은 2억 정도 나올 것 같아요, 32년 다녔습니다",
         "예금이 2천만원 있습니다",
-        "국민연금은 월 150만원 정도 나온다고 하더라고요",
+        "국민연금은 월 150만원 정도 나온다고 하더라고요, 32년 넣었습니다",
         "주식이나 펀드는 없어요",
         "퇴직연금도 없습니다",
         "아파트가 한 채 있는데 5억 정도 합니다",
@@ -177,6 +177,7 @@ def test_full_conversation_produces_a_valid_profile(agent: ProfilingAgent):
     assert profile.severance_pay == 200_000_000
     assert profile.cash_savings == 20_000_000
     assert profile.national_pension_monthly == 1_500_000
+    assert profile.national_pension_months == 384  # "32년 넣었습니다"
     assert profile.real_estate == 500_000_000
     assert profile.risk_tolerance is RiskTolerance.CONSERVATIVE
 
@@ -184,6 +185,64 @@ def test_full_conversation_produces_a_valid_profile(agent: ProfilingAgent):
     assert profile.financial_assets == 220_000_000
     assert profile.total_assets == 720_000_000
     assert profile.income_gap_months == 48
+
+
+def test_the_pension_question_also_collects_the_months():
+    """질문을 하나 더 늘리지 않고 가입월수를 받는다 — 퇴직금 질문과 같은 방식."""
+    pension = next(q for q in QUESTIONS if q.key == "pension")
+
+    assert pension.fills == ("national_pension_monthly", "national_pension_months")
+    assert not any("가입월수" in q.text for q in QUESTIONS)  # 별도 질문을 만들지 않았다
+
+
+def test_monthly_salary_is_derived_not_asked():
+    """퇴직금은 '30일분 평균임금 × 근속연수'다. 2억 ÷ 32년 = 월 625만원.
+
+    질문을 늘리는 대신 이미 받은 두 값에서 끌어낸다. 다만 명예퇴직금이 섞이면
+    어긋나므로 '가정한 값'으로 표시한다.
+    """
+    assert not any("급여" in q.text for q in QUESTIONS)
+
+    profile = build_profile(
+        {
+            "birth_year": 1966,
+            "retirement_year": 2026,
+            "monthly_expense": 3_000_000,
+            "severance_pay": 200_000_000,
+            "years_employed": 32,
+        }
+    )
+    assert profile.last_monthly_salary == 6_250_000
+    assert "last_monthly_salary" in profile.assumed_fields
+
+
+def test_a_stated_salary_is_not_overwritten_by_the_derivation():
+    """사용자가 직접 말한 값을 유도값으로 덮으면 안 된다."""
+    profile = build_profile(
+        {
+            "birth_year": 1966,
+            "retirement_year": 2026,
+            "monthly_expense": 3_000_000,
+            "severance_pay": 200_000_000,
+            "years_employed": 32,
+            "last_monthly_salary": 4_000_000,
+        }
+    )
+    assert profile.last_monthly_salary == 4_000_000
+    assert "last_monthly_salary" not in profile.assumed_fields
+
+
+def test_the_salary_is_left_unknown_when_it_cannot_be_derived():
+    """근속연수를 모르면 끌어낼 수 없다. 0 으로 두고 화면이 물어보게 한다."""
+    profile = build_profile(
+        {
+            "birth_year": 1966,
+            "retirement_year": 2026,
+            "monthly_expense": 3_000_000,
+            "severance_pay": 200_000_000,
+        }
+    )
+    assert profile.last_monthly_salary == 0
 
 
 def test_pension_start_age_is_derived_not_asked(agent: ProfilingAgent):

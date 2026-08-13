@@ -34,13 +34,19 @@ KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("other_monthly_income", ("월세", "임대", "아르바이트", "알바")),
     ("debt", ("대출", "빚", "융자", "담보")),
     ("monthly_expense", ("생활비", "쓰고", "지출")),
+    ("last_monthly_salary", ("월급", "급여", "보수월액", "월 소득")),
 )
 
 # "없어요"는 0 이다. "모르겠어요"는 미상이므로 여기 넣으면 안 된다 —
 # 0(보유 안 함)과 null(아직 모름)이 섞이면 잘못된 시뮬레이션이 나간다.
 NEGATIVE = ("없어", "없습니다", "없음", "안 해", "안해", "하나도")
 
-MONTHLY_SLOTS = {"monthly_expense", "national_pension_monthly", "other_monthly_income"}
+MONTHLY_SLOTS = {
+    "monthly_expense",
+    "national_pension_monthly",
+    "other_monthly_income",
+    "last_monthly_salary",
+}
 
 # 한 문장에 여러 항목을 말한 경우를 나눈다.
 # "퇴직금은 2억, 예금은 5천" 에서 퇴직금이 5천까지 삼키지 않게 하기 위함.
@@ -50,6 +56,18 @@ _SEGMENT = re.compile(r"[,，]|그리고|이고요|이고|이며|있고")
 # 금액과 같은 문장에 섞여 와도 놓치면 안 된다.
 _SERVICE_YEARS = re.compile(
     r"(\d{1,2})\s*년\s*(?:정도\s*)?(?:간\s*|동안\s*)?(?:다녔|다니|근무|재직|일했|몸담)"
+)
+
+# 국민연금 가입기간. "32년 넣었습니다" / "가입 기간은 30년" / "384개월 냈어요".
+# 119개월과 120개월이 '연금 0원'과 '평생 연금'을 가르므로 개월까지 받는다.
+# 근속연수와 표현이 겹쳐서(둘 다 "N년") 납부를 뜻하는 동사나 '가입' 이라는 말이
+# 붙은 경우에만 잡는다. 겹치면 근속연수로 오인해 엉뚱한 세금이 계산된다.
+_PENSION_PERIOD = re.compile(
+    r"(?:(\d{1,3})\s*개월|(\d{1,2})\s*년)\s*(?:정도\s*|쯤\s*)?(?:간\s*|동안\s*)?"
+    r"(?:넣었|넣고|부었|붓고|냈|내고|납부|가입)"
+)
+_PENSION_PERIOD_PREFIX = re.compile(
+    r"가입\s*(?:기간|한\s*기간)?[은는이가]?\s*(?:(\d{1,3})\s*개월|(\d{1,2})\s*년)"
 )
 
 
@@ -82,6 +100,19 @@ def _risk_from(text: str) -> Optional[str]:
     return None
 
 
+def _pension_months(answer: str) -> Optional[int]:
+    """국민연금 가입기간을 개월 수로. 못 알아내면 None."""
+    for pattern in (_PENSION_PERIOD, _PENSION_PERIOD_PREFIX):
+        match = pattern.search(answer)
+        if match is None:
+            continue
+        months, years = match.group(1), match.group(2)
+        if months is not None:
+            return int(months)
+        return int(years) * 12
+    return None
+
+
 def extract_slots(transcript: str, today_year: int) -> dict[str, Any]:
     """대화록에서 슬롯을 뽑는다. 못 알아낸 항목은 넣지 않는다(= null)."""
     answer = _last_line(transcript, "사용자")
@@ -97,9 +128,16 @@ def extract_slots(transcript: str, today_year: int) -> dict[str, Any]:
     if service is not None:
         result["years_employed"] = int(service.group(1))
 
-    # 금액을 읽기 전에 근속연수 표현을 떼어낸다. "2억 정도요, 32년 다녔습니다" 에서
+    # 국민연금 가입기간도 마찬가지다.
+    pension_months = _pension_months(answer)
+    if pension_months is not None:
+        result["national_pension_months"] = pension_months
+
+    # 금액을 읽기 전에 기간 표현을 떼어낸다. "2억 정도요, 32년 다녔습니다" 에서
     # 금액 파서가 32 를 금액의 일부로 삼켜 2억 32원이 되는 것을 막는다.
     money_text = _SERVICE_YEARS.sub(" ", answer)
+    money_text = _PENSION_PERIOD.sub(" ", money_text)
+    money_text = _PENSION_PERIOD_PREFIX.sub(" ", money_text)
 
     # 1) 질문이 특정된 경우 — 그 질문이 채우는 슬롯을 먼저 시도한다.
     if asked is not None:
