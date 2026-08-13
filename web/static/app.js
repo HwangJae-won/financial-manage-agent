@@ -23,8 +23,12 @@ const el = (tag, className, text) => {
   return node;
 };
 
+/* 상대경로로 요청한다. code-server 의 /proxy/8000/ 처럼 base path 가 붙는 환경에서도
+ * 그대로 동작하게 하기 위함이다. 절대경로(/api/...)를 쓰면 프록시 뒤에서 깨진다. */
+const API_BASE = new URL(".", location.href).pathname;
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(API_BASE + path.replace(/^\//, ""), {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
