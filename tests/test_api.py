@@ -348,3 +348,22 @@ def test_prescriptions_reject_an_absurd_target_age(client):
         "/api/prescriptions", json={"sample": "demo", "target_age": 200}
     )
     assert response.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# 민감도 — 우리 숫자 자체를 흔들어 본다
+# --------------------------------------------------------------------------- #
+
+
+def test_sensitivity_names_the_dominant_assumption(client, finished_session):
+    body = client.post("/api/sensitivity", json={"session_id": finished_session}).json()
+
+    assert body["baseline_depletion_age"] == 69
+    assert body["cases"]
+    assert body["cases"][0]["key"] == "expense"  # 흔들림이 큰 순서로 정렬된다
+    assert body["cases"][0]["label"] in body["summary"]
+    assert body["caveat"]
+
+
+def test_sensitivity_without_a_profile_is_a_400(client):
+    assert client.post("/api/sensitivity", json={}).status_code == 400

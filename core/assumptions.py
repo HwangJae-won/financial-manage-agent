@@ -56,6 +56,16 @@ class AssetMapAssumption(BaseModel):
     survival_months: int
 
 
+class SensitivityAssumption(BaseModel):
+    """민감도 분석에서 각 가정을 흔들어 볼 폭. 기본값은 YAML 이 없을 때만 쓰인다."""
+
+    inflation_delta: float = Field(default=0.007, ge=0.0)
+    return_delta: float = Field(default=0.010, ge=0.0)
+    expense_ratio: float = Field(default=0.10, ge=0.0, le=1.0)
+    pension_ratio: float = Field(default=0.10, ge=0.0, le=1.0)
+    assets_ratio: float = Field(default=0.10, ge=0.0, le=1.0)
+
+
 class Assumptions(BaseModel):
     """시뮬레이션 가정값 전체."""
 
@@ -66,6 +76,7 @@ class Assumptions(BaseModel):
     health_insurance: HealthInsuranceAssumption
     pension: PensionAssumption
     asset_map: AssetMapAssumption
+    sensitivity: SensitivityAssumption = Field(default_factory=SensitivityAssumption)
 
     def expected_return(self, allocation: dict[str, float]) -> float:
         """자산군 배분에 대한 가중평균 기대수익률."""

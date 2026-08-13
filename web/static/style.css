@@ -533,3 +533,23 @@ th {
     transition: none !important;
   }
 }
+
+/* ---------------- 민감도 ---------------- */
+
+.sensitivity-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 10rem;
+}
+.sensitivity-bar {
+  height: 1rem;
+  min-width: 2px;
+  background: var(--warn);
+  border-radius: 3px;
+  flex: 1;
+}
+.sensitivity-value {
+  font-weight: 700;
+  white-space: nowrap;
+}

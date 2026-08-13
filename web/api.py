@@ -32,6 +32,7 @@ from core.formatting import fmt_krw, fmt_months, fmt_years
 from core.models import SimulationResult, UserProfile
 from core.montecarlo import MonteCarloResult, run_monte_carlo
 from core.prescribe import PrescriptionSet, prescribe
+from core.sensitivity import SensitivityReport, analyze_sensitivity
 from core.policy import (
     DEFAULT_POLICY_KEY,
     PolicyFact,
@@ -140,6 +141,14 @@ class PrescriptionRequest(BaseModel):
     target_age: Optional[int] = Field(
         default=None, ge=60, le=110, description="목표 나이. 생략하면 시뮬레이션 종료 나이"
     )
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
+
+
+class SensitivityRequest(BaseModel):
+    """민감도 분석 요청. 프로파일을 찾는 규칙은 다른 요청과 같다."""
+
     profile: Optional[UserProfile] = None
     session_id: Optional[str] = None
     sample: Optional[str] = None
@@ -327,6 +336,13 @@ def prescriptions(request: PrescriptionRequest) -> PrescriptionSet:
     """목표 나이까지 유지하려면 무엇을 얼마나 바꿔야 하는지 (기능 ⑤ 확장)."""
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return prescribe(profile, target_age=request.target_age)
+
+
+@app.post("/api/sensitivity", response_model=SensitivityReport)
+def sensitivity(request: SensitivityRequest) -> SensitivityReport:
+    """가정이 틀렸을 때 결과가 얼마나 흔들리는지 (자기검증)."""
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return analyze_sensitivity(profile)
 
 
 @app.get("/api/policies", response_model=list[PolicyFact])

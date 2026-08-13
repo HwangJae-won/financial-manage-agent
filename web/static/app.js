@@ -247,6 +247,7 @@ function renderAnalysis(data) {
   renderRiskScore(data.risk_score);
   renderScenarios(data.scenarios, data.monte_carlo);
   loadPrescriptions();
+  loadSensitivity();
 }
 
 function renderBriefing(briefing) {
@@ -584,6 +585,57 @@ function renderPrescriptions(plan) {
 
     box.appendChild(card);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* 민감도 — 우리 숫자 자체를 흔들어 본다                                 */
+/* ------------------------------------------------------------------ */
+
+async function loadSensitivity() {
+  const box = $("#sensitivity");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  try {
+    renderSensitivity(
+      await api("/api/sensitivity", {
+        method: "POST",
+        body: JSON.stringify({ profile }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderSensitivity(report) {
+  const box = $("#sensitivity");
+  box.innerHTML = "";
+  box.appendChild(el("div", "alert alert-warn", report.summary.replace(/\*\*/g, "")));
+
+  // 흔들림 폭을 막대 길이로. 가장 큰 항목을 100% 로 잡는다.
+  const widest = Math.max(1, ...report.cases.map((c) => c.swing_years));
+
+  report.cases.forEach((item) => {
+    const row = el("div", "bucket-row");
+
+    const name = el("div", "bucket-name");
+    name.appendChild(el("strong", null, item.label));
+    name.appendChild(el("div", "hint", item.detail));
+    row.appendChild(name);
+
+    const meter = el("div", "sensitivity-meter");
+    const bar = el("div", "sensitivity-bar");
+    bar.style.width = `${Math.round((item.swing_years / widest) * 100)}%`;
+    // 색만으로 구분하지 않는다 — 숫자를 함께 적는다.
+    meter.appendChild(bar);
+    meter.appendChild(el("span", "sensitivity-value", `${item.swing_years}년`));
+    row.appendChild(meter);
+
+    box.appendChild(row);
+  });
+
+  box.appendChild(el("p", "hint", report.caveat));
 }
 
 /* ------------------------------------------------------------------ */

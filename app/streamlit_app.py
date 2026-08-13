@@ -39,6 +39,7 @@ from core.models import RiskTolerance, UserProfile
 from core.montecarlo import run_monte_carlo
 from core.policy import PolicyImpact, analyze_policy_impact
 from core.prescribe import PrescriptionSet, prescribe
+from core.sensitivity import SensitivityReport, analyze_sensitivity
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
 from core.scenarios import build_scenarios, comparison_table
@@ -586,6 +587,43 @@ def render_prescriptions(profile: UserProfile) -> None:
                 st.warning(f"⚠️ {option.caution}")
 
 
+def render_sensitivity(profile: UserProfile) -> None:
+    """가정이 틀렸을 때 결과가 얼마나 흔들리는지 — 우리 숫자의 자기검증."""
+    st.subheader("이 결과는 얼마나 믿을 수 있나")
+    st.caption(
+        "여기 나온 숫자는 모두 가정 위에 있습니다. "
+        "가정이 틀렸을 때 결과가 얼마나 달라지는지 함께 봅니다."
+    )
+
+    report: SensitivityReport = analyze_sensitivity(profile)
+    st.warning(report.summary)
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "가정": case.label,
+                    "지금 값": case.baseline_label,
+                    "낮을 때": f"{case.low_label} → {_age_text(case.low_depletion_age, report.horizon_age)}",
+                    "높을 때": f"{case.high_label} → {_age_text(case.high_depletion_age, report.horizon_age)}",
+                    "흔들림": f"{case.swing_years}년",
+                }
+                for case in report.cases
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    for case in report.cases[:2]:
+        st.caption(case.detail)
+    st.caption(report.caveat)
+
+
+def _age_text(depletion_age, horizon: int) -> str:
+    return f"{horizon}세까지 유지" if depletion_age is None else f"만 {depletion_age}세 고갈"
+
+
 def render_policy_impact(profile: UserProfile) -> None:
     """발표된 제도 변화가 이 사람에게 실제로 얼마인지 (기능 ④·⑧)."""
     impact: PolicyImpact = analyze_policy_impact(profile)
@@ -681,6 +719,8 @@ def main() -> None:
     render_scenarios(scenarios)
     st.divider()
     render_prescriptions(profile)
+    st.divider()
+    render_sensitivity(profile)
     st.divider()
     render_policy_impact(profile)
 
