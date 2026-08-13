@@ -32,6 +32,9 @@
     <nav class="tabs wrap" role="tablist" aria-label="화면 선택">
       <button role="tab" class="tab" data-view="chat" aria-selected="true">상담하기</button>
       <button role="tab" class="tab" data-view="result" aria-selected="false">내 결과</button>
+      <button role="tab" class="tab" data-view="policy" aria-selected="false">
+        제도 변화
+      </button>
       <button role="tab" class="tab" data-view="fraud" aria-selected="false">
         받은 연락 확인
       </button>
@@ -109,6 +112,29 @@
           </p>
           <div id="scenarios"></div>
         </div>
+      </section>
+
+      <!-- 제도 변화 -->
+      <section id="view-policy" class="view hidden" role="tabpanel" aria-label="제도 변화">
+        <h2>제도가 바뀌면 나는 얼마나 달라지나</h2>
+        <p class="section-note">
+          뉴스는 '발표'와 '시행'을 구분하지 않습니다. 여기서는 지금 어느 단계인지 밝히고,
+          고객님 자산 기준으로 실제 금액이 얼마나 달라지는지 계산해 드립니다.
+        </p>
+
+        <div class="row-actions">
+          <button type="button" class="btn btn-primary" id="btn-policy-impact">
+            내 자산으로 계산하기
+          </button>
+          <button type="button" class="btn btn-ghost" data-policy-sample="diversified">
+            예시 인물로 해보기
+          </button>
+        </div>
+
+        <div id="policy-impact"></div>
+
+        <h3>공식 정보로 확인한 제도 현황</h3>
+        <div id="policy-list"></div>
       </section>
 
       <!-- 사기 확인 -->

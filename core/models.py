@@ -22,6 +22,16 @@ class RiskTolerance(str, Enum):
     AGGRESSIVE = "공격형"
 
 
+# ISA 계좌 안에서 주식성 자산이 차지한다고 보는 비중. 투자성향에 따라 달라진다.
+# 자산군 배분(current_allocation)과 ISA 세제 영향 계산(core/policy.py)이 **같은 값**을
+# 써야 하므로 모듈 상수로 뺐다. 한쪽만 바뀌면 두 계산이 조용히 어긋난다.
+ISA_EQUITY_SHARE: dict["RiskTolerance", float] = {
+    RiskTolerance.CONSERVATIVE: 0.2,
+    RiskTolerance.MODERATE: 0.5,
+    RiskTolerance.AGGRESSIVE: 0.8,
+}
+
+
 class AssetClass(str, Enum):
     """시뮬레이션에서 사용하는 자산군. assumptions.yaml 의 키와 일치해야 한다."""
 
@@ -147,11 +157,7 @@ class UserProfile(BaseModel):
         if base <= 0:
             return Allocation(cash=1.0, bond=0.0, equity=0.0)
 
-        isa_equity_share = {
-            RiskTolerance.CONSERVATIVE: 0.2,
-            RiskTolerance.MODERATE: 0.5,
-            RiskTolerance.AGGRESSIVE: 0.8,
-        }[self.risk_tolerance]
+        isa_equity_share = ISA_EQUITY_SHARE[self.risk_tolerance]
 
         cash = self.severance_pay + self.cash_savings
         bond = self.pension_dc + self.isa * (1 - isa_equity_share)

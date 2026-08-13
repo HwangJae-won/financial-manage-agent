@@ -529,6 +529,118 @@ function volatilityLabel(volatility) {
 /* 받은 연락 확인                                                       */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 제도 변화 (기능 ④·⑧)                                                */
+/* ------------------------------------------------------------------ */
+
+function setupPolicy() {
+  $("#btn-policy-impact").addEventListener("click", () => {
+    // 이미 분석한 프로파일이 있으면 그걸 쓰고, 없으면 대화 세션에서 꺼낸다.
+    if (state.analysis?.profile) {
+      requestPolicyImpact({ profile: state.analysis.profile });
+    } else if (state.sessionId) {
+      requestPolicyImpact({ session_id: state.sessionId });
+    } else {
+      $("#policy-impact").textContent = "먼저 상담을 진행해 주세요.";
+    }
+  });
+
+  $$("[data-policy-sample]").forEach((btn) =>
+    btn.addEventListener("click", () =>
+      requestPolicyImpact({ sample: btn.dataset.policySample }),
+    ),
+  );
+}
+
+async function requestPolicyImpact(body) {
+  try {
+    renderPolicyImpact(
+      await api("/api/policy-impact", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    );
+  } catch (err) {
+    $("#policy-impact").textContent = err.message;
+  }
+}
+
+function policyBadge(fact) {
+  return el("span", `badge ${fact.is_confirmed ? "badge-ok" : "badge-warn"}`, fact.badge);
+}
+
+async function loadPolicyList() {
+  const box = $("#policy-list");
+  try {
+    const facts = await api("/api/policies");
+    box.innerHTML = "";
+    facts.forEach((fact) => {
+      const card = el("div", "card");
+      const title = el("div", "signal-title");
+      title.appendChild(policyBadge(fact));
+      title.appendChild(document.createTextNode(` ${fact.title}`));
+      card.appendChild(title);
+      card.appendChild(el("p", null, fact.summary));
+      card.appendChild(el("div", "advice", fact.caution));
+      card.appendChild(el("p", "hint", fact.trust_note));
+      box.appendChild(card);
+    });
+  } catch (_) {
+    box.textContent = "제도 정보를 불러오지 못했습니다.";
+  }
+}
+
+function renderPolicyImpact(result) {
+  const box = $("#policy-impact");
+  box.innerHTML = "";
+  const fact = result.policy;
+
+  const head = el("div", "card");
+  const title = el("div", "signal-title");
+  title.appendChild(policyBadge(fact));
+  title.appendChild(document.createTextNode(` ${fact.title}`));
+  head.appendChild(title);
+  head.appendChild(el("p", "hint", fact.trust_note));
+  box.appendChild(head);
+
+  // 확정되지 않은 제도라는 사실을 숫자보다 먼저 보여준다.
+  if (!fact.is_confirmed) {
+    box.appendChild(el("div", "alert alert-warn", `⚠️ ${fact.notice}`));
+  }
+
+  box.appendChild(el("div", `alert ${result.material ? "alert-warn" : "alert-ok"}`, result.headline));
+  box.appendChild(el("p", null, result.reason));
+
+  // 비교표는 금액 표기까지 서버가 완성해서 보낸다 (core/formatting.py 한 곳에서만 포맷).
+  if (result.comparison.length) {
+    const table = el("table");
+    const thead = el("thead");
+    const header = el("tr");
+    ["항목", result.current.label, result.proposed.label, "차이"].forEach((text) =>
+      header.appendChild(el("th", null, text)),
+    );
+    thead.appendChild(header);
+    table.appendChild(thead);
+
+    const tbody = el("tbody");
+    result.comparison.forEach((row) => {
+      const tr = el("tr");
+      [row.label, row.current, row.proposed, row.delta].forEach((text) =>
+        tr.appendChild(el("td", null, text)),
+      );
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    box.appendChild(table);
+  }
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${result.verdict}`));
+
+  const notes = el("ul", "hint");
+  result.notes.forEach((note) => notes.appendChild(el("li", null, note)));
+  box.appendChild(notes);
+}
+
 const SAMPLE_SCAM = `[특별안내] 고객님만 드리는 기회입니다.
 정부 세법이 바뀌면서 ISA 비과세 혜택이 곧 폐지됩니다.
 지금 갈아타지 않으시면 손해입니다.
@@ -643,7 +755,9 @@ async function init() {
   setupAccessibility();
   setupTabs();
   setupChat();
+  setupPolicy();
   setupFraud();
+  loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>
     btn.addEventListener("click", () => loadSample(btn.dataset.sample)),

@@ -18,11 +18,23 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Protocol
 
 from core.assumptions import Assumptions, load_assumptions
 from core.models import Allocation, SimulationResult, UserProfile, YearRow
 from core.schedule import build_schedule
+
+
+class TaxModel(Protocol):
+    """연간 세금 계산 규약.
+
+    기본값은 아래 `annual_tax` 다. 이 자리를 열어 둔 이유는 정책 영향 분석(W7)이
+    "세제가 이렇게 바뀌면 계획이 어떻게 달라지는가"를 **같은 엔진으로** 다시 돌려야
+    하기 때문이다. 세제만 갈아끼우고 나머지 규약(수익 시점, 물가연동, 안분)은
+    그대로 공유해야 두 결과의 차이가 오직 세제 차이가 된다.
+    """
+
+    def __call__(self, taxable_return: float, assumptions: Assumptions) -> float: ...
 
 
 def split_return_rates(
@@ -57,6 +69,7 @@ def simulate(
     allocation: Optional[Allocation] = None,
     assumptions: Optional[Assumptions] = None,
     include_income: bool = True,
+    tax_model: Optional[TaxModel] = None,
     _compute_coverage: bool = True,
 ) -> SimulationResult:
     """퇴직 시점부터 horizon_age 까지 연 단위로 자산 잔액을 시뮬레이션한다.
@@ -67,10 +80,13 @@ def simulate(
         assumptions: 가정값. 생략하면 data/assumptions.yaml.
         include_income: False면 국민연금·기타소득을 모두 0으로 두고 순수 인출만
             시뮬레이션한다. `expense_coverage_years` 계산에 쓰인다.
+        tax_model: 세금 계산기. 생략하면 `annual_tax`(기본 규약)를 쓴다.
+            정책 영향 분석에서 세제만 바꿔 재시뮬레이션할 때 주입한다.
         _compute_coverage: 내부용 재귀 방지 플래그.
     """
     assumptions = assumptions or load_assumptions()
     allocation = allocation or profile.current_allocation()
+    compute_tax: TaxModel = tax_model or annual_tax
 
     taxable_rate, untaxed_rate = split_return_rates(allocation, assumptions)
     plans = build_schedule(profile, assumptions, include_income=include_income)
@@ -111,7 +127,7 @@ def simulate(
 
         taxable_return = start_balance * taxable_rate * frac
         investment_return = taxable_return + start_balance * untaxed_rate * frac
-        tax = annual_tax(taxable_return, assumptions)
+        tax = compute_tax(taxable_return, assumptions)
 
         end_balance = (
             start_balance
@@ -158,6 +174,7 @@ def simulate(
             allocation=allocation,
             assumptions=assumptions,
             include_income=False,
+            tax_model=tax_model,
             _compute_coverage=False,
         )
         coverage = (

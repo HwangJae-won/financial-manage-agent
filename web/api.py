@@ -31,6 +31,13 @@ from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_years
 from core.models import SimulationResult, UserProfile
 from core.montecarlo import MonteCarloResult, run_monte_carlo
+from core.policy import (
+    DEFAULT_POLICY_KEY,
+    PolicyFact,
+    PolicyImpact,
+    analyze_policy_impact,
+    load_policy_catalog,
+)
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
 from core.scenarios import Scenario, build_scenarios
@@ -124,6 +131,19 @@ class FraudRequest(BaseModel):
     session_id: Optional[str] = Field(
         default=None, description="있으면 사용자 보유 자산과 엮어 설명한다"
     )
+
+
+class PolicyImpactRequest(BaseModel):
+    """정책 영향 계산 요청.
+
+    프로파일은 세 가지 경로로 온다: 직접 입력(profile) / 대화 세션(session_id) /
+    예시 인물(sample). 화면에서 어느 경로로 들어와도 같은 답을 주기 위한 것이다.
+    """
+
+    policy_key: str = DEFAULT_POLICY_KEY
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -265,6 +285,44 @@ def get_sample(key: str) -> UserProfile:
     if key not in samples:
         raise HTTPException(404, f"알 수 없는 예시입니다: {key}")
     return samples[key]
+
+
+@app.get("/api/policies", response_model=list[PolicyFact])
+def policies() -> list[PolicyFact]:
+    """정책 팩트시트 목록.
+
+    출처·확정여부·시행일·확인일이 모델에 이미 들어 있다(기능 ⑧). 프런트엔드가
+    뱃지 문구를 다시 만들지 않게 서버가 완성해서 보낸다.
+    """
+    return load_policy_catalog()
+
+
+@app.post("/api/policy-impact", response_model=PolicyImpact)
+def policy_impact(request: PolicyImpactRequest) -> PolicyImpact:
+    """정책 한 건이 이 사용자의 은퇴 계획에 미치는 영향을 계산한다 (기능 ④)."""
+    profile = request.profile
+
+    if profile is None and request.session_id:
+        agent = _SESSIONS.get(request.session_id)
+        if agent is not None:
+            try:
+                profile = agent.build_profile()
+            except ValueError:
+                profile = None
+
+    if profile is None and request.sample:
+        samples = {"demo": DEMO_PROFILE, "diversified": DIVERSIFIED_PROFILE}
+        profile = samples.get(request.sample)
+
+    if profile is None:
+        raise HTTPException(
+            400, "먼저 상담을 마치시거나 예시 인물을 선택해 주세요."
+        )
+
+    try:
+        return analyze_policy_impact(profile, policy_key=request.policy_key)
+    except KeyError as exc:
+        raise HTTPException(404, f"알 수 없는 정책입니다: {request.policy_key}") from exc
 
 
 @app.post("/api/fraud-check", response_model=FraudAssessment)

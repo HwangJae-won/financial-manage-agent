@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from core.asset_map import build_asset_map
 from core.assumptions import Assumptions, load_assumptions
-from core.cashflow import simulate
+from core.cashflow import TaxModel, simulate
 from core.models import RiskTolerance, UserProfile
 
 GREEN, AMBER, RED = "양호", "주의", "부족"
@@ -111,12 +111,19 @@ class RiskScore(BaseModel):
 
 
 def compute_risk_score(
-    profile: UserProfile, assumptions: Optional[Assumptions] = None
+    profile: UserProfile,
+    assumptions: Optional[Assumptions] = None,
+    *,
+    tax_model: Optional[TaxModel] = None,
 ) -> RiskScore:
-    """프로파일에서 은퇴 재무 안정도를 계산한다."""
+    """프로파일에서 은퇴 재무 안정도를 계산한다.
+
+    tax_model 은 정책 영향 분석(core/policy.py)에서 세제만 바꿔 점수를 다시 매길 때
+    쓴다. 생략하면 기본 세제 규약을 그대로 쓴다.
+    """
     assumptions = assumptions or load_assumptions()
     amap = build_asset_map(profile, assumptions)
-    sim = simulate(profile, assumptions=assumptions)
+    sim = simulate(profile, assumptions=assumptions, tax_model=tax_model)
     allocation = profile.current_allocation()
 
     components = [

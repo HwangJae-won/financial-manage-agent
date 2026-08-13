@@ -246,3 +246,60 @@ def test_fraud_check_tolerates_an_unfinished_session(client):
 
 def test_fraud_check_rejects_empty_text(client):
     assert client.post("/api/fraud-check", json={"text": ""}).status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# 제도 변화 (기능 ④·⑧)
+# --------------------------------------------------------------------------- #
+
+
+def test_policy_list_ships_its_trust_metadata(client):
+    """뱃지와 출처 한 줄을 서버가 완성해서 보낸다 — 프런트가 다시 만들지 않게."""
+    facts = client.get("/api/policies").json()
+    assert facts
+
+    isa = next(f for f in facts if f["key"] == "isa_reform")
+    assert isa["status"] == "발표"
+    assert isa["is_confirmed"] is False
+    assert "미확정" in isa["badge"]
+    assert isa["source"] in isa["trust_note"]
+    assert isa["notice"]
+
+
+def test_policy_impact_for_a_sample_persona(client):
+    body = client.post(
+        "/api/policy-impact", json={"sample": "diversified"}
+    ).json()
+
+    assert body["applicable"] is True
+    assert body["annual_tax_saving"] > 0
+    assert body["comparison"]
+    assert body["policy"]["notice"]  # 미확정 고지는 항상 따라붙는다
+
+
+def test_policy_impact_says_so_when_it_does_not_apply(client, finished_session):
+    """기획서 예시 인물은 ISA 가 없다 — 빈 화면 대신 '영향 없음'이 나와야 한다."""
+    body = client.post(
+        "/api/policy-impact", json={"session_id": finished_session}
+    ).json()
+
+    assert body["applicable"] is False
+    assert "ISA" in body["reason"]
+    assert body["verdict"]
+
+
+def test_policy_impact_accepts_a_profile_directly(client):
+    profile = client.get("/api/samples/diversified").json()
+    body = client.post("/api/policy-impact", json={"profile": profile}).json()
+    assert body["applicable"] is True
+
+
+def test_policy_impact_without_a_profile_is_a_400(client):
+    assert client.post("/api/policy-impact", json={}).status_code == 400
+
+
+def test_unknown_policy_key_is_a_404(client):
+    response = client.post(
+        "/api/policy-impact", json={"sample": "demo", "policy_key": "없는정책"}
+    )
+    assert response.status_code == 404

@@ -37,6 +37,7 @@ from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_pct, fmt_years
 from core.models import RiskTolerance, UserProfile
 from core.montecarlo import run_monte_carlo
+from core.policy import PolicyImpact, analyze_policy_impact
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
 from core.scenarios import build_scenarios, comparison_table
@@ -304,14 +305,10 @@ def render_fraud_check() -> None:
             "발표된 개편안은 국회 논의에서 바뀌거나 무산될 수 있습니다."
         )
         for check in result.policy_checks:
-            badge = "✅ 시행 중" if check.is_confirmed else f"⚠️ {check.status} (미확정)"
-            with st.expander(f"{badge} · {check.title}"):
+            with st.expander(f"{check.badge} · {check.title}"):
                 st.markdown(check.summary)
                 st.warning(check.caution)
-                st.caption(
-                    f"출처: {check.source}"
-                    + (f" / 시행일 {check.effective_date}" if check.effective_date else "")
-                )
+                st.caption(check.trust_note)
 
     if result.profile_notes:
         st.markdown("#### 고객님 자산과의 관계")
@@ -562,6 +559,44 @@ def render_scenarios(scenarios) -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def render_policy_impact(profile: UserProfile) -> None:
+    """발표된 제도 변화가 이 사람에게 실제로 얼마인지 (기능 ④·⑧)."""
+    impact: PolicyImpact = analyze_policy_impact(profile)
+    fact = impact.policy
+
+    st.subheader("제도가 바뀌면 나는 얼마나 달라지나")
+    st.markdown(f"**{fact.badge} · {fact.title}**")
+
+    # 확정되지 않았다는 사실을 숫자보다 먼저 보여준다.
+    if not fact.is_confirmed:
+        st.warning(f"⚠️ {fact.notice}")
+
+    (st.warning if impact.material else st.success)(impact.headline)
+    st.markdown(impact.reason)
+
+    if impact.comparison:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "항목": row.label,
+                        impact.current.label: row.current,
+                        impact.proposed.label: row.proposed,
+                        "차이": row.delta,
+                    }
+                    for row in impact.comparison
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    st.info(f"**이렇게 하세요** — {impact.verdict}")
+    for note in impact.notes:
+        st.caption(note)
+    st.caption(fact.trust_note)
+
+
 def main() -> None:
     st.title("🧭 내 자산 AI 네비게이터")
     st.markdown("**퇴직 후, 내 자산 어떻게 관리해야 할까요?**")
@@ -617,6 +652,8 @@ def main() -> None:
     render_risk_score(score)
     st.divider()
     render_scenarios(scenarios)
+    st.divider()
+    render_policy_impact(profile)
 
     st.divider()
     st.caption(

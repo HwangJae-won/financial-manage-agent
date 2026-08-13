@@ -23,14 +23,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from agents.llm import LLMClient, get_client
 from core.formatting import fmt_krw
 from core.models import UserProfile
+from core.policy import POLICY_PATH, PolicyFact, load_policy_catalog, load_raw_facts
 
 RULES_PATH = Path(__file__).resolve().parent.parent / "data" / "fraud_rules.yaml"
-POLICY_PATH = Path(__file__).resolve().parent.parent / "data" / "policy_facts.yaml"
 
 
 class RiskLevel(str, Enum):
@@ -57,19 +57,48 @@ class Signal(BaseModel):
 
 
 class PolicyCheck(BaseModel):
-    """메시지가 언급한 제도와 공식 정보의 대조 결과."""
+    """메시지가 언급한 제도와 공식 정보의 대조 결과.
 
+    표시에 필요한 신뢰 정보(뱃지·출처 한 줄·미확정 고지)는 `core.policy.PolicyFact`
+    가 만든 것을 그대로 실어 보낸다. 사기 확인 화면과 정책 영향 화면이 같은 문구를
+    쓰게 하려는 것이다 — 두 화면에서 같은 제도가 다르게 표시되면 그 자체가 불신 요인이다.
+    """
+
+    key: str = ""
     topic: str
     title: str
     status: str = Field(description="발표 / 입법예고 / 국회통과 / 공포 / 시행")
     effective_date: Optional[str]
     source: str
+    checked_at: str = ""
     summary: str
     caution: str
 
+    badge: str = Field(default="", description="화면 뱃지 (⑧ 확정여부 표시)")
+    trust_note: str = Field(default="", description="출처 · 확정여부 · 시행일 · 확인일")
+    notice: str = Field(default="", description="미확정 건에 강제되는 문구")
+
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_confirmed(self) -> bool:
         return self.status == "시행"
+
+    @classmethod
+    def from_fact(cls, fact: PolicyFact) -> "PolicyCheck":
+        return cls(
+            key=fact.key,
+            topic=fact.topic,
+            title=fact.title,
+            status=fact.status.value,
+            effective_date=fact.effective_date,
+            source=fact.source,
+            checked_at=fact.checked_at,
+            summary=fact.summary.strip(),
+            caution=fact.caution.strip(),
+            badge=fact.badge,
+            trust_note=fact.trust_note,
+            notice=fact.notice,
+        )
 
 
 class FraudAssessment(BaseModel):
@@ -104,9 +133,12 @@ def load_rules(path: str | Path = RULES_PATH) -> dict[str, Any]:
     return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
 
 
-@functools.lru_cache(maxsize=2)
 def load_policy_facts(path: str | Path = POLICY_PATH) -> list[dict[str, Any]]:
-    return yaml.safe_load(Path(path).read_text(encoding="utf-8")).get("facts", [])
+    """정책 팩트시트 원본. 실제 로딩은 core.policy 가 한다.
+
+    사기 탐지와 정책 영향 분석이 **같은 파일 한 벌**을 보게 하려고 위임만 남겼다.
+    """
+    return load_raw_facts(path)
 
 
 def _normalize(text: str) -> str:
@@ -210,17 +242,9 @@ def check_policies(text: str, rules: Optional[dict[str, Any]] = None) -> list[Po
         return []
 
     return [
-        PolicyCheck(
-            topic=fact["topic"],
-            title=fact["title"],
-            status=fact["status"],
-            effective_date=fact.get("effective_date"),
-            source=fact["source"],
-            summary=fact["summary"].strip(),
-            caution=fact["caution"].strip(),
-        )
-        for fact in load_policy_facts()
-        if fact["topic"] in mentioned
+        PolicyCheck.from_fact(fact)
+        for fact in load_policy_catalog()
+        if fact.topic in mentioned
     ]
 
 
