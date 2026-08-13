@@ -284,6 +284,28 @@ def test_result_questions_route_to_result():
     assert classify_intent("왜 그런지 자세히 설명해 주세요").intent is Intent.RESULT
 
 
+def test_asking_about_my_own_result_is_not_a_fraud_check():
+    """'이 결과 믿어도 되나요?'의 '믿어도'가 사기 확인 표현과 그대로 겹친다.
+
+    내 계산을 묻는 말이 남의 연락 확인으로 가면 엉뚱한 위험도 판정이 돌아온다.
+    에이전트가 화면에 나온 뒤로는 사용자에게 그대로 보이는 오작동이다.
+    """
+    for question in [
+        "이 결과 믿어도 되나요?",
+        "이 결과 자세히 설명해 주세요",
+        "왜 그런 결과가 나왔는지 봐 주세요",
+    ]:
+        assert classify_intent(question).intent is Intent.RESULT, question
+
+
+def test_a_message_noun_still_wins_for_fraud():
+    """남이 보낸 것을 가리키는 말이 있으면 결과 표현이 섞여도 사기 확인이다."""
+    assert (
+        classify_intent("이런 문자 받았는데 믿어도 될까요?").intent is Intent.FRAUD_CHECK
+    )
+    assert classify_intent("카톡이 왔는데 봐주세요").intent is Intent.FRAUD_CHECK
+
+
 def test_short_legit_text_does_not_route_to_fraud_check():
     """짧은 정상 답변이 사기 확인으로 새면 대화가 망가진다."""
     assert classify_intent("연 3.2% 예금 들었어요").intent is not Intent.FRAUD_CHECK
@@ -423,3 +445,42 @@ def test_the_mock_advisor_answer_is_readable():
 
     assert "{" not in reply.text
     assert "고갈" in reply.text
+
+
+def test_the_mock_picks_a_tool_that_matches_the_question():
+    """키 없이 도는 데모에서 실행 기록이 질문과 맞아야 한다 (A4).
+
+    기본 동작은 언제나 첫 번째 도구라, 화면에 trace 를 띄우기 시작한 이상
+    "국민연금을 더 낼까요?"에 simulate_plan 이 찍히면 에이전트가 질문을
+    못 알아듣는 것처럼 보인다.
+    """
+    from agents.mocks import pick_tool
+
+    names = [
+        "simulate_plan",
+        "prescribe",
+        "sensitivity",
+        "policy_impact",
+        "severance_options",
+        "health_insurance_cliff",
+        "national_pension_options",
+        "check_message",
+    ]
+    cases = {
+        "국민연금을 더 내는 게 나을까요?": "national_pension_options",
+        "건강보험료는 얼마나 나오나요?": "health_insurance_cliff",
+        "퇴직금은 일시금으로 받을까요?": "severance_options",
+        "95세까지 유지하려면 어떻게 해야 하나요?": "prescribe",
+        "이 결과 믿어도 되나요?": "sensitivity",
+        "ISA 세제가 바뀐다던데요": "policy_impact",
+        "생활비를 줄이면 어떻게 되나요?": "simulate_plan",
+    }
+    for question, expected in cases.items():
+        assert pick_tool(question, names) == expected, question
+
+
+def test_an_unmatched_question_falls_back_to_the_default():
+    """못 고르면 기본 동작에 맡긴다 — 지어내지 않는다."""
+    from agents.mocks import pick_tool
+
+    assert pick_tool("안녕하세요", ["simulate_plan"]) is None

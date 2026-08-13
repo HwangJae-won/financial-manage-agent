@@ -300,3 +300,64 @@ def demo_handler(today_year: int):
         return extractor(prompt, schema, system)
 
     return handler
+
+
+# --------------------------------------------------------------------------- #
+# 도구 선택 — 키 없이 도는 데모에서 "에이전트가 도구를 고른다"가 보이게
+# --------------------------------------------------------------------------- #
+
+# 질문에 담긴 말과 도구의 연결.
+#
+# mock 이 질문을 이해하는 척하려는 것이 아니다. 기본 동작은 **언제나 첫 번째
+# 도구**를 부르는 것이라, 키 없이 시연하면 "국민연금을 더 낼까요?"에도 실행
+# 기록에 simulate_plan 이 찍힌다. 화면에 trace 를 띄우기 시작한 이상(A4) 그
+# 장면은 에이전트가 질문을 못 알아듣는 것처럼 보인다.
+TOOL_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("national_pension_options", ("국민연금", "추납", "임의계속", "가입기간")),
+    ("health_insurance_cliff", ("건강보험", "건보료", "피부양자", "지역가입자")),
+    ("severance_options", ("퇴직금", "일시금", "IRP", "연금으로 받")),
+    ("policy_impact", ("제도", "세법", "ISA", "개편", "바뀐다")),
+    ("sensitivity", ("믿어도", "가정", "틀리면", "정확한가")),
+    ("prescribe", ("어떻게 해야", "얼마나 줄", "유지하려면", "까지 가려면", "방법")),
+    ("simulate_plan", ("줄이면", "늘리면", "바꾸면", "어떻게 되")),
+)
+
+
+def pick_tool(question: str, names: list[str]) -> Optional[str]:
+    """질문에 맞는 도구 이름. 못 고르면 None."""
+    for name, words in TOOL_KEYWORDS:
+        if name in names and any(word in question for word in words):
+            return name
+    return None
+
+
+def demo_tool_handler():
+    """MockClient(tool_handler=...) 에 꽂을 핸들러.
+
+    질문에 맞는 도구를 한 번 부르고, 결과를 받으면 그것으로 답한다.
+    도구를 고르지 못하면 기본 동작(첫 번째 도구)에 맡긴다.
+    """
+    from agents.llm import ToolCall, ToolTurn, _default_mock_turn
+
+    def handler(turns, tools):
+        started = max(
+            (i for i, turn in enumerate(turns) if turn.role == "user" and turn.text),
+            default=-1,
+        )
+        segment = turns[started + 1 :]
+        if not tools or any(turn.tool_results for turn in segment):
+            return _default_mock_turn(turns, tools)
+
+        question = turns[started].text if started >= 0 else ""
+        chosen = pick_tool(question, [tool.name for tool in tools])
+        if chosen is None:
+            return _default_mock_turn(turns, tools)
+
+        return ToolTurn(
+            tool_calls=[ToolCall(id="mock-call-1", name=chosen, arguments={})],
+            provider="mock",
+            model="mock",
+            stop_reason="tool_use",
+        )
+
+    return handler

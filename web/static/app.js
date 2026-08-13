@@ -136,6 +136,10 @@ function renderConversation(data) {
   const log = $("#chat-log");
   log.innerHTML = "";
   data.messages.forEach((m) => log.appendChild(el("div", `bubble ${m.role}`, m.content)));
+
+  // 마지막 답변이 계산을 돌린 것이면 그 아래에 실행 기록을 붙인다 (A4).
+  if (data.advice) log.appendChild(renderTrace(data.advice));
+  if (data.fraud) log.appendChild(renderRouted(data));
   log.scrollTop = log.scrollHeight;
 
   const ratio = data.total ? data.answered / data.total : 0;
@@ -164,6 +168,81 @@ function renderConversation(data) {
   // 결과 화면으로 넘기는 것은 **처음 한 번만.** 이후 질문마다 화면이 튀면
   // 대화를 이어갈 수 없다.
   if (finished && !state.analysis) loadAnalysis();
+}
+
+/* ------------------------------------------------------------------ */
+/* 실행 기록 (A4) — 무엇을 어떤 값으로 계산했는지                            */
+/* ------------------------------------------------------------------ */
+
+function renderTrace(advice) {
+  const box = el("details", "trace");
+  const count = advice.trace.length;
+  box.appendChild(
+    el(
+      "summary",
+      null,
+      count
+        ? `이 답을 만들려고 계산 ${count}번을 돌렸습니다 — 눌러서 확인`
+        : "계산 없이 답했습니다",
+    ),
+  );
+
+  // 지어낸 숫자를 걸러냈으면 그 사실이 먼저다. 답변보다 중요한 정보다.
+  if (advice.stop_reason === "blocked") {
+    box.appendChild(
+      el(
+        "div",
+        "alert alert-warn",
+        `계산 결과에 없는 숫자(${advice.unverified_numbers.join(", ")})가 있어 ` +
+          "원래 답변을 내보내지 않았습니다.",
+      ),
+    );
+  }
+
+  advice.trace.forEach((step, index) => {
+    const item = el("div", "trace-step");
+    item.appendChild(
+      el("div", "trace-head", `${index + 1}. ${step.tool}${step.ok ? "" : " (실패)"}`),
+    );
+
+    const args = Object.entries(step.arguments || {});
+    item.appendChild(
+      el(
+        "div",
+        "trace-args",
+        args.length
+          ? args.map(([k, v]) => `${k} = ${v}`).join(" · ")
+          : "인자 없이 — 현재 계획 그대로",
+      ),
+    );
+    item.appendChild(el("div", "trace-result", step.summary));
+    box.appendChild(item);
+  });
+
+  if (count) {
+    box.appendChild(
+      el(
+        "p",
+        "hint",
+        "답변의 숫자는 전부 위 계산에서 나온 값입니다. " +
+          "계산에 없는 숫자는 답변에서 걸러집니다.",
+      ),
+    );
+  }
+  return box;
+}
+
+function renderRouted(data) {
+  const box = el("div", "trace");
+  box.appendChild(
+    el("div", "trace-head", `받은 연락 확인으로 보냈습니다 — ${data.routing_reason}`),
+  );
+  (data.fraud.signals || []).forEach((signal) =>
+    box.appendChild(
+      el("div", "trace-result", `${signal.label} — "${signal.evidence}"`),
+    ),
+  );
+  return box;
 }
 
 async function startSession() {

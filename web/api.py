@@ -24,7 +24,7 @@ from agents.config import describe as describe_llm
 from agents.explain import Briefing, explain
 from agents.fraud import FraudAssessment, analyze_message
 from agents.llm import MockClient, get_client
-from agents.mocks import demo_handler
+from agents.mocks import demo_handler, demo_tool_handler
 from agents.advisor import AdvisorReply
 from agents.graph import Supervisor, SupervisorReply
 from core.asset_map import AssetMap, build_asset_map
@@ -69,6 +69,9 @@ def _client():
         client = MockClient()
     if isinstance(client, MockClient):
         client.structured_handler = demo_handler(_dt.date.today().year)
+        # 질문에 맞는 도구를 고르게 한다. 기본 동작은 언제나 첫 도구라, 화면에
+        # trace 를 띄우는 지금은 에이전트가 질문을 못 알아듣는 것처럼 보인다.
+        client.tool_handler = demo_tool_handler()
     return client
 
 

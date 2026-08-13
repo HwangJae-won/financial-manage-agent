@@ -95,6 +95,19 @@ _RESULT_ASKS = (
     "자세히",
 )
 
+# 남이 보낸 것을 가리키는 말. 사기 확인 표현과 결과 질문이 겹칠 때 이것으로 가른다.
+_MESSAGE_NOUNS = (
+    "문자",
+    "카톡",
+    "메시지",
+    "연락",
+    "전화",
+    "상품",
+    "광고",
+    "권유",
+    "안내를 받",
+)
+
 
 def classify_intent(
     text: str, *, client: Optional[LLMClient] = None
@@ -115,22 +128,29 @@ def classify_intent(
             reason=f"광고성 표현({signals[0].label})이 있는 긴 메시지입니다.",
         )
 
-    # 2) 명시적으로 확인을 요청하는 말투
+    # 2) 내 결과에 대한 질문인지 먼저 가른다.
+    #
+    # "이 결과 믿어도 되나요?"의 '믿어도'가 사기 확인 표현과 그대로 겹친다. 순서를
+    # 두지 않으면 **내 계산을 묻는 말이 남의 연락 확인으로 가서** 엉뚱한 위험도
+    # 판정이 돌아온다. 남이 보낸 것을 가리키는 말이 없을 때만 결과로 본다.
+    if any(ask in stripped for ask in _RESULT_ASKS) and not any(
+        noun in stripped for noun in _MESSAGE_NOUNS
+    ):
+        return Routing(intent=Intent.RESULT, reason="분석 결과에 대해 묻고 있습니다.")
+
+    # 3) 명시적으로 확인을 요청하는 말투
     if any(ask in stripped for ask in _FRAUD_ASKS):
         return Routing(
             intent=Intent.FRAUD_CHECK, reason="받은 연락이 믿을 만한지 묻고 있습니다."
         )
 
-    # 3) 신호가 여러 개면 길이가 짧아도 확인 대상으로 본다
+    # 4) 신호가 여러 개면 길이가 짧아도 확인 대상으로 본다
     if len(signals) >= 2:
         return Routing(
             intent=Intent.FRAUD_CHECK, reason="위험 신호가 두 개 이상 확인되었습니다."
         )
 
-    if any(ask in stripped for ask in _RESULT_ASKS):
-        return Routing(intent=Intent.RESULT, reason="분석 결과에 대해 묻고 있습니다.")
-
-    # 4) 규칙으로 애매하면 그때 LLM 에 물어본다
+    # 5) 규칙으로 애매하면 그때 LLM 에 물어본다
     if client is not None:
         try:
             data = client.structured(

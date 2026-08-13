@@ -30,7 +30,8 @@ from agents.config import describe as describe_llm
 from agents.explain import Briefing, explain
 from agents.fraud import RiskLevel, Severity, analyze_message
 from agents.llm import MockClient, get_client
-from agents.mocks import demo_handler
+from agents.mocks import demo_handler, demo_tool_handler
+from agents.advisor import AdvisorReply
 from agents.graph import Supervisor
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
@@ -231,6 +232,9 @@ def _resolve_client():
 
     if isinstance(client, MockClient):
         client.structured_handler = demo_handler(_dt.date.today().year)
+        # 질문에 맞는 도구를 고르게 한다. 기본 동작은 언제나 첫 도구라, 화면에
+        # trace 를 띄우는 지금은 에이전트가 질문을 못 알아듣는 것처럼 보인다.
+        client.tool_handler = demo_tool_handler()
     return client, error
 
 
@@ -333,16 +337,75 @@ def render_followup(agent: Supervisor) -> None:
     columns = st.columns(len(EXAMPLE_QUESTIONS))
     for column, question in zip(columns, EXAMPLE_QUESTIONS):
         if column.button(question, use_container_width=True):
-            agent.send(question)
+            reply = agent.send(question)
+            st.session_state.last_advice = reply.advice
             st.rerun()
 
     for message in agent.followups:
         with st.chat_message("assistant" if message["role"] == "assistant" else "user"):
             st.markdown(message["content"])
 
+    render_trace(st.session_state.get("last_advice"))
+
     if asked := st.chat_input("궁금한 점을 물어보세요"):
-        agent.send(asked)
+        reply = agent.send(asked)
+        st.session_state.last_advice = reply.advice
         st.rerun()
+
+
+def render_trace(advice: AdvisorReply | None) -> None:
+    """무엇을 어떤 값으로 계산했는지 (A4).
+
+    이 서비스의 주장은 "숫자는 전부 계산에서 나온다"는 것이다. 그 주장을 검증
+    가능하게 만드는 화면이다. 에이전트가 자율적으로 도구를 골라도 **어떤 도구를
+    어떤 인자로 불러 무슨 값이 나왔는지**가 그대로 남는다.
+
+    기본은 접어 둔다. 시니어 사용자에게 먼저 보여야 하는 것은 답이고,
+    근거는 펼쳐볼 수 있으면 충분하다.
+    """
+    if advice is None:
+        return
+
+    if advice.blocked:
+        # 지어낸 숫자를 걸러냈다는 사실은 답변보다 먼저 알려야 한다.
+        st.warning(
+            "계산 결과에 없는 숫자"
+            f"({', '.join(advice.unverified_numbers)})가 있어 원래 답변을 "
+            "내보내지 않았습니다. 계산된 값만 위에 정리했습니다."
+        )
+
+    count = len(advice.trace)
+    label = (
+        f"이 답을 만들려고 계산 {count}번을 돌렸습니다 — 눌러서 확인"
+        if count
+        else "계산 없이 답했습니다"
+    )
+    with st.expander(label):
+        if not count:
+            st.caption("도구를 부르지 않았습니다.")
+            return
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "순서": index + 1,
+                        "계산": step.tool + ("" if step.ok else " (실패)"),
+                        "넣은 값": (
+                            " · ".join(f"{k} = {v}" for k, v in step.arguments.items())
+                            or "인자 없이 — 현재 계획 그대로"
+                        ),
+                        "나온 값": step.summary,
+                    }
+                    for index, step in enumerate(advice.trace)
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.caption(
+            "답변의 숫자는 전부 위 계산에서 나온 값입니다. "
+            "계산에 없는 숫자는 답변에서 걸러집니다."
+        )
 
 
 SAMPLE_SCAM = """[특별안내] 고객님만 드리는 기회입니다.

@@ -263,6 +263,25 @@ def test_asking_a_follow_up_runs_a_calculation(chat_app):
     assert "생활비를 50만원 줄이면 어떻게 되나요?" in text  # 내 질문이 남는다
 
 
+def test_the_trace_is_shown_after_an_answer(chat_app):
+    """A4 — 어떤 도구를 어떤 인자로 불러 무슨 값이 나왔는지가 화면에 남아야 한다.
+
+    "숫자는 전부 계산에서 나온다"는 주장을 사용자가 직접 확인할 수 있게 하는
+    화면이다. 이것이 없으면 그냥 믿어 달라는 말이 된다.
+    """
+    button = next(
+        b for b in chat_app.button if b.label == "국민연금을 더 내는 게 나을까요?"
+    )
+    after = button.click().run()
+
+    assert not after.exception, after.exception
+    labels = " ".join(e.label for e in after.expander)
+    assert "계산" in labels and "눌러서 확인" in labels
+
+    captions = " ".join(c.value for c in after.caption)
+    assert "계산에 없는 숫자는 답변에서 걸러집니다" in captions
+
+
 def test_conversation_advances_to_the_next_question():
     at = _fresh()
     at.chat_input[0].set_value("1966년 12월생입니다").run()
