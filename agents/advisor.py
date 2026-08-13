@@ -41,6 +41,7 @@ from agents.llm import (
     Turn,
     get_client,
 )
+from agents.explain import numbers_not_in
 from agents.tools import Toolbox, ToolRun, policy_keys
 from core.assumptions import Assumptions
 from core.models import UserProfile
@@ -86,6 +87,19 @@ FALLBACK_TEXT = (
     "잠시 후 다시 여쭤봐 주시거나, 화면의 계산 결과를 함께 봐 주세요."
 )
 
+# 도구 출력에 없는 숫자를 말했을 때 모델에게 돌려주는 지시 (A7).
+# 한 번은 스스로 고칠 기회를 준다. 그래도 남으면 답변을 내보내지 않는다.
+CORRECTION = (
+    "\n\n방금 답변에 계산 결과에 없는 숫자가 있습니다: {numbers}.\n"
+    "이 숫자들을 빼고 다시 쓰세요. 도구가 돌려준 값만 인용하고, "
+    "직접 더하거나 빼서 만든 숫자는 쓰지 마세요."
+)
+
+BLOCKED_PREFIX = (
+    "확인되지 않은 숫자가 있어 답변을 그대로 전해 드리지 않았습니다. "
+    "계산된 값만 아래에 정리했습니다.\n"
+)
+
 
 class TraceStep(BaseModel):
     """화면에 그대로 그리는 실행 기록 한 줄."""
@@ -114,12 +128,22 @@ class AdvisorReply(BaseModel):
     trace: list[TraceStep] = Field(default_factory=list)
     rounds: int = Field(default=0, description="도구를 부른 횟수")
     stop_reason: str = Field(
-        default="answered", description="answered / max_rounds / llm_error"
+        default="answered",
+        description="answered / max_rounds / llm_error / blocked",
+    )
+    unverified_numbers: list[str] = Field(
+        default_factory=list,
+        description="도구 출력에 없어 걸러낸 숫자. 비어 있으면 전부 계산에서 나온 값이다.",
     )
 
     @property
     def used_tools(self) -> bool:
         return bool(self.trace)
+
+    @property
+    def blocked(self) -> bool:
+        """지어낸 숫자 때문에 원문을 내보내지 않았는가."""
+        return self.stop_reason == "blocked"
 
 
 class Advisor:
@@ -184,6 +208,20 @@ class Advisor:
     def _trace(self, before: int) -> list[TraceStep]:
         return [TraceStep.from_run(run) for run in self.toolbox.runs[before:]]
 
+    def _quotable(self) -> str:
+        """인용해도 되는 숫자의 출처 (A7).
+
+        두 가지다. **지금까지의 도구 출력 전부** — 전부 `core/` 에서 나온 값이다.
+        그리고 **사용자가 직접 말한 것** — "생활비 50만원 줄이면요?"에 답하면서
+        50만원을 되뇌는 것까지 지어냈다고 볼 수는 없다.
+
+        이번 질문의 출력만 보면 안 된다. "그럼 60만원은요?" 같은 후속 질문에서
+        모델이 앞 턴의 계산 결과를 다시 인용하는 것이 정상이기 때문이다.
+        """
+        parts = [_flatten(output) for output in self.toolbox.outputs]
+        parts += [turn.text for turn in self.turns if turn.role == "user" and turn.text]
+        return " ".join(parts)
+
     def _reply(
         self, text: str, before: int, rounds: int, stop_reason: str
     ) -> AdvisorReply:
@@ -191,9 +229,40 @@ class Advisor:
         if not text.strip():
             # 모델이 도구만 부르고 말을 안 하는 경우가 있다. 빈 답변을 내보내지 않는다.
             text = _text_from_trace(trace)
+
+        unverified = numbers_not_in(text, self._quotable())
+        if unverified:
+            text, stop_reason = self._rewrite_or_block(text, trace, unverified)
+
         return AdvisorReply(
-            text=text, trace=trace, rounds=rounds, stop_reason=stop_reason
+            text=text,
+            trace=trace,
+            rounds=rounds,
+            stop_reason=stop_reason,
+            unverified_numbers=unverified,
         )
+
+    def _rewrite_or_block(
+        self, text: str, trace: list[TraceStep], unverified: list[str]
+    ) -> tuple[str, str]:
+        """지어낸 숫자가 있으면 한 번 고쳐 쓰게 하고, 그래도 남으면 막는다.
+
+        브리핑(`agents/explain.py`)은 표시만 하고 원문을 내보낸다. 여기서는 막는다.
+        브리핑은 이미 화면에 있는 계산 결과를 옮겨 적는 것이라 사용자가 대조할 수
+        있지만, 상담 답변은 **대조할 대상이 화면에 없다.** 틀린 숫자가 그대로
+        사용자의 판단이 된다.
+        """
+        retry = self._converse(
+            [], system=SYSTEM + CORRECTION.format(numbers=", ".join(unverified))
+        )
+        if retry is not None and retry.text.strip():
+            still = numbers_not_in(retry.text, self._quotable())
+            if not still:
+                self.turns.append(retry.as_turn())
+                return retry.text, "answered"
+
+        # 고쳐 쓰지 못했다. 계산된 값만으로 만든 문장으로 대체한다.
+        return BLOCKED_PREFIX + _text_from_trace(trace), "blocked"
 
     def _fallback(self, before: int, *, rounds: int) -> AdvisorReply:
         """모델 호출이 실패했을 때. 계산한 것이 있으면 그것만이라도 보여준다."""
@@ -207,6 +276,19 @@ class Advisor:
         return AdvisorReply(
             text=text, trace=trace, rounds=rounds, stop_reason="llm_error"
         )
+
+
+def _flatten(value) -> str:
+    """중첩된 도구 출력을 숫자 검사용 한 줄로 편다.
+
+    출력은 `{"임의계속가입": {"내는_돈": "2,665만원"}}` 처럼 겹쳐 있다. 겉만 보면
+    안쪽 금액이 '인용 가능'에서 빠져 멀쩡한 답변이 막힌다.
+    """
+    if isinstance(value, dict):
+        return " ".join(_flatten(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_flatten(v) for v in value)
+    return str(value)
 
 
 def _text_from_trace(trace: list[TraceStep]) -> str:

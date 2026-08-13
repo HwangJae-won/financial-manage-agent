@@ -246,6 +246,94 @@ def test_default_round_limit_is_small():
     assert MAX_ROUNDS <= 5
 
 
+# --------------------------------------------------------------------------- #
+# A7 — 도구 출력에 없는 숫자는 내보내지 않는다
+# --------------------------------------------------------------------------- #
+
+
+def _says(*texts):
+    """도구를 한 번 부른 뒤 정해진 문장을 차례로 내놓는 핸들러."""
+    said = {"count": 0}
+
+    def handler(turns, tools):
+        if tools and not any(turn.tool_results for turn in turns):
+            return ToolTurn(
+                tool_calls=[ToolCall(id="c1", name="simulate_plan", arguments={})],
+                stop_reason="tool_use",
+            )
+        index = min(said["count"], len(texts) - 1)
+        said["count"] += 1
+        return ToolTurn(text=texts[index], stop_reason="end_turn")
+
+    return handler
+
+
+def test_an_invented_number_is_blocked():
+    """계산에 없는 숫자를 말하면 그 답변은 나가지 않는다.
+
+    브리핑은 표시만 하고 내보내지만 상담 답변은 막는다. 브리핑은 화면의 계산
+    결과와 대조할 수 있지만, 상담 답변은 대조할 대상이 화면에 없기 때문이다.
+    """
+    reply = advisor(_says("연 7.4% 수익률이면 걱정 없으십니다.")).ask("어떤가요?")
+
+    assert reply.blocked
+    assert reply.stop_reason == "blocked"
+    assert "7.4" in reply.unverified_numbers
+    assert "7.4" not in reply.text
+    assert "확인되지 않은 숫자" in reply.text
+
+
+def test_the_model_gets_one_chance_to_fix_it():
+    """지어낸 숫자를 스스로 빼면 그 답변은 그대로 나간다."""
+    reply = advisor(
+        _says("연 7.4% 수익률이면 걱정 없으십니다.", "지금 계획으로는 만 69세에 고갈됩니다.")
+    ).ask("어떤가요?")
+
+    assert not reply.blocked
+    assert reply.stop_reason == "answered"
+    assert "69세" in reply.text
+
+
+def test_numbers_from_the_tool_output_pass():
+    """계산에서 나온 숫자는 막히지 않는다 — 과잉 차단이면 기능이 죽는다."""
+    reply = advisor(_says("만 69세에 금융자산이 바닥납니다.")).ask("언제 고갈되나요?")
+
+    assert reply.unverified_numbers == []
+    assert reply.stop_reason == "answered"
+
+
+def test_numbers_the_user_said_are_quotable():
+    """'생활비 50만원 줄이면요?'에 답하며 50만원을 되뇌는 것은 지어낸 것이 아니다."""
+    reply = advisor(_says("50만원을 줄이시면 도움이 됩니다.")).ask(
+        "생활비를 50만원 줄이면 어떻게 되나요?"
+    )
+
+    assert reply.unverified_numbers == []
+
+
+def test_earlier_results_stay_quotable_in_follow_ups():
+    """후속 질문에서 앞 턴의 계산 결과를 다시 인용하는 것은 정상이다."""
+    agent = advisor()
+    first = agent.ask("제 계획은요?")
+    depletion = str(first.trace[0].output["현재_계획"]["금융자산_고갈_나이"])
+
+    agent.client.tool_handler = _says(f"앞서 말씀드린 만 {depletion}세 그대로입니다.")
+    second = agent.ask("다시 정리해 주세요")
+
+    assert second.unverified_numbers == []
+    assert second.stop_reason == "answered"
+
+
+def test_nested_tool_output_counts_as_quotable():
+    """출력이 겹쳐 있어도 안쪽 금액까지 인용 가능 범위에 들어가야 한다."""
+    from agents.advisor import _flatten
+
+    flat = _flatten({"임의계속가입": {"내는_돈": "2,665만원", "주의": ["평생 6,993만원"]}})
+
+    assert "2,665만원" in flat
+    assert "6,993만원" in flat
+
+
 def test_the_mock_keeps_calculating_across_follow_up_questions():
     """키 없이 도는 데모에서 두 번째 질문부터 계산이 멈추면 안 된다.
 

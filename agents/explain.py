@@ -184,14 +184,23 @@ def _numbers_in(text: str) -> set[str]:
     return found
 
 
+def numbers_not_in(text: str, source: str) -> list[str]:
+    """`source` 에 없는 숫자를 돌려준다.
+
+    브리핑은 '계산 결과 팩트시트'를, 상담 에이전트는 '도구 출력'을 출처로 삼는다.
+    출처의 모양만 다르고 판정 규칙은 같아야 하므로 여기 하나로 둔다.
+    """
+    return sorted(
+        _numbers_in(text) - _numbers_in(source), key=lambda s: (len(s), s)
+    )
+
+
 def verify_numbers(text: str, facts: dict[str, str]) -> list[str]:
     """문장에 등장한 숫자 중 계산 결과에 없는 것을 돌려준다.
 
     비어 있으면 정상 — LLM 이 숫자를 지어내지 않았다는 뜻이다.
     """
-    allowed = _numbers_in(" ".join(facts.values()))
-    used = _numbers_in(text)
-    return sorted(used - allowed, key=lambda s: (len(s), s))
+    return numbers_not_in(text, " ".join(facts.values()))
 
 
 # --------------------------------------------------------------------------- #
