@@ -14,7 +14,14 @@ import pytest
 from agents import config as cfg
 from agents.llm import (
     NUMERIC_GUARDRAIL,
+    AnthropicClient,
     MockClient,
+    OpenAIClient,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+    ToolTurn,
+    Turn,
     _empty_from_schema,
     get_client,
 )
@@ -225,3 +232,116 @@ def test_numeric_guardrail_covers_the_key_risks():
     """숫자 환각과 상품 권유는 이 서비스에서 가장 위험한 두 가지다."""
     assert "직접 계산" in NUMERIC_GUARDRAIL
     assert "권유하지" in NUMERIC_GUARDRAIL
+
+
+# --------------------------------------------------------------------------- #
+# 도구 사용 (tool use) — 프로바이더 중립 이력을 각자의 형식으로 옮기는가
+# --------------------------------------------------------------------------- #
+
+TOOLS = [
+    ToolSpec(
+        name="simulate_plan",
+        description="생활비를 바꿔 은퇴 계획을 다시 계산한다",
+        input_schema={
+            "type": "object",
+            "properties": {"monthly_expense": {"type": "integer"}},
+        },
+    ),
+    ToolSpec(name="prescribe", description="목표 역산", input_schema={"type": "object"}),
+]
+
+
+def _two_turn_history():
+    """도구를 한 번 부르고 결과를 받은 상태의 이력."""
+    return [
+        Turn(role="user", text="생활비를 줄이면 어떻게 되나요?"),
+        Turn(
+            role="assistant",
+            tool_calls=[
+                ToolCall(id="call-1", name="simulate_plan", arguments={"monthly_expense": 2_500_000})
+            ],
+        ),
+        Turn(
+            role="user",
+            tool_results=[ToolResult(call_id="call-1", content='{"depletion_age": 73}')],
+        ),
+    ]
+
+
+def test_mock_runs_a_full_tool_loop_without_a_key():
+    """키 없이도 루프가 두 바퀴 돌아야 한다 — CI 와 발표 당일 안전망."""
+    client = MockClient()
+
+    first = client.converse([Turn(role="user", text="안녕하세요")], TOOLS)
+    assert first.wants_tools
+    assert first.tool_calls[0].name == "simulate_plan"
+
+    history = _two_turn_history()
+    second = client.converse(history, TOOLS)
+    assert not second.wants_tools
+    assert "73" in second.text  # 도구 결과를 받아 마무리한다
+
+    assert [c["kind"] for c in client.calls] == ["converse", "converse"]
+
+
+def test_mock_tool_handler_is_used():
+    def handler(turns, tools):
+        return ToolTurn(text="정해진 답", provider="mock", model="mock")
+
+    client = MockClient(tool_handler=handler)
+    assert client.converse([Turn(role="user", text="무엇이든")], TOOLS).text == "정해진 답"
+
+
+def test_tool_turn_round_trips_into_history():
+    """응답을 이력에 다시 넣을 때 도구 호출이 보존되어야 한다."""
+    call = ToolCall(id="call-9", name="prescribe", arguments={"target_age": 95})
+    turn = ToolTurn(text="계산해 보겠습니다", tool_calls=[call]).as_turn()
+
+    assert turn.role == "assistant"
+    assert turn.text == "계산해 보겠습니다"
+    assert turn.tool_calls == [call]
+
+
+def test_anthropic_encodes_tool_use_and_tool_result_blocks():
+    """anthropic 은 tool_use 가 assistant, tool_result 가 user 블록이다."""
+    encoded = AnthropicClient._encode(_two_turn_history())
+
+    assert [m["role"] for m in encoded] == ["user", "assistant", "user"]
+    assert encoded[1]["content"][0]["type"] == "tool_use"
+    assert encoded[1]["content"][0]["input"] == {"monthly_expense": 2_500_000}
+    assert encoded[2]["content"][0]["type"] == "tool_result"
+    assert encoded[2]["content"][0]["tool_use_id"] == "call-1"
+
+
+def test_anthropic_never_emits_an_empty_text_block():
+    """빈 텍스트 블록은 API 가 거부한다."""
+    encoded = AnthropicClient._encode(_two_turn_history())
+    for message in encoded:
+        for block in message["content"]:
+            assert block.get("type") != "text" or block["text"]
+
+
+def test_openai_encodes_tool_results_as_their_own_messages():
+    """openai 는 도구 결과가 별도의 tool 역할 메시지다 — anthropic 과 다른 지점."""
+    encoded = OpenAIClient._encode(_two_turn_history())
+
+    assert [m["role"] for m in encoded] == ["user", "assistant", "tool"]
+    assert encoded[1]["content"] is None  # 텍스트 없이 도구만 부른 턴
+    assert encoded[1]["tool_calls"][0]["function"]["name"] == "simulate_plan"
+    assert encoded[2]["tool_call_id"] == "call-1"
+
+
+def test_both_providers_accept_the_same_neutral_history():
+    """에이전트가 프로바이더 차이를 몰라도 되어야 한다."""
+    history = _two_turn_history()
+    assert AnthropicClient._encode(history)
+    assert OpenAIClient._encode(history)
+    # 인코딩이 원본 이력을 건드리지 않는다
+    assert history[1].tool_calls[0].arguments == {"monthly_expense": 2_500_000}
+
+
+def test_empty_turns_are_dropped():
+    """말도 도구도 없는 턴이 메시지로 나가면 API 가 거부한다."""
+    history = [Turn(role="user", text="질문"), Turn(role="assistant")]
+    assert len(AnthropicClient._encode(history)) == 1
+    assert len(OpenAIClient._encode(history)) == 1

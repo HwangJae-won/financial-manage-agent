@@ -3,9 +3,18 @@
 `.env` 의 FINAGENT_LLM_PROVIDER 한 줄로 전환된다. 프로바이더를 바꿔도
 agents/ 의 나머지 코드는 손대지 않는다.
 
-두 가지만 제공한다. 이 서비스에 필요한 게 그것뿐이기 때문이다:
+세 가지를 제공한다. 이 서비스에 필요한 게 그것뿐이기 때문이다:
   - complete()  : 자연어 응답 (설명 생성)
   - structured(): JSON 스키마에 맞는 구조화 응답 (슬롯 추출, 사기 판정)
+  - converse()  : 도구를 쥔 대화 한 턴 (계산 엔진을 부르는 에이전트)
+
+`converse()` 는 **한 턴만** 처리한다. 반복 루프는 여기 두지 않고 에이전트 쪽에
+둔다. 이 파일은 프로바이더 차이를 흡수하는 얇은 어댑터로 남아야 하고, "몇 번까지
+돌 것인가 / 실패하면 어떻게 할 것인가" 같은 판단은 프로바이더와 무관하기 때문이다.
+
+대화 이력은 `Turn` 이라는 중립 형태로 주고받는다. 도구 호출 이력의 표현은
+프로바이더마다 다른데(anthropic 은 tool_use/tool_result 블록, openai 는
+tool_calls/tool 역할), 그 차이를 에이전트가 알게 되면 프로바이더 전환이 깨진다.
 
 mock 은 임시방편이 아니라 계속 쓰는 코드다. CI 는 키 없이 그래프 로직을
 검증해야 하고, 발표 당일 네트워크가 끊겨도 데모는 돌아가야 한다.
@@ -16,7 +25,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Callable, Literal, Optional, Protocol
 
 from agents.config import Provider, api_key, model_name, resolve_provider
 
@@ -41,6 +50,74 @@ class LLMResponse:
     raw: Any = None
 
 
+# --------------------------------------------------------------------------- #
+# 도구 사용 (tool use)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class ToolSpec:
+    """모델에게 알려줄 도구 하나의 정의."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+@dataclass
+class ToolCall:
+    """모델이 요청한 도구 호출."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ToolResult:
+    """도구를 실행한 결과. 다음 턴에 모델에게 돌려준다."""
+
+    call_id: str
+    content: str = ""  # JSON 으로 직렬화한 도구 출력
+    is_error: bool = False
+
+
+@dataclass
+class Turn:
+    """대화 이력 한 칸 — 프로바이더 중립 형태.
+
+    도구 호출 이력의 표현은 프로바이더마다 다르다. 그 차이는 각 클라이언트의
+    `_encode` 가 흡수하고, 에이전트는 이 형태만 다룬다.
+    """
+
+    role: Literal["user", "assistant"]
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_results: list[ToolResult] = field(default_factory=list)
+
+
+@dataclass
+class ToolTurn:
+    """모델 응답 한 턴. 말을 하거나, 도구를 부르거나, 둘 다 한다."""
+
+    text: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    provider: str = ""
+    model: str = ""
+    stop_reason: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    raw: Any = None
+
+    @property
+    def wants_tools(self) -> bool:
+        return bool(self.tool_calls)
+
+    def as_turn(self) -> Turn:
+        """이 응답을 대화 이력에 넣을 형태로 바꾼다."""
+        return Turn(role="assistant", text=self.text, tool_calls=list(self.tool_calls))
+
+
 class LLMClient(Protocol):
     """agents/ 가 의존하는 유일한 LLM 인터페이스."""
 
@@ -59,6 +136,15 @@ class LLMClient(Protocol):
         system: Optional[str] = None,
         max_tokens: int = 2000,
     ) -> dict[str, Any]: ...
+
+    def converse(
+        self,
+        turns: list[Turn],
+        tools: list[ToolSpec],
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 2000,
+    ) -> ToolTurn: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -127,6 +213,81 @@ class AnthropicClient:
         text = next(b.text for b in response.content if b.type == "text")
         return json.loads(text)
 
+    # -- 도구 사용 -------------------------------------------------------- #
+
+    @staticmethod
+    def _encode(turns: list[Turn]) -> list[dict[str, Any]]:
+        """중립 이력을 Anthropic 메시지로 옮긴다.
+
+        도구 결과는 **user 역할의 tool_result 블록**으로 들어간다.
+        빈 텍스트 블록은 API 가 거부하므로 넣지 않는다.
+        """
+        messages: list[dict[str, Any]] = []
+        for turn in turns:
+            content: list[dict[str, Any]] = []
+            for result in turn.tool_results:
+                content.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": result.call_id,
+                        "content": result.content,
+                        "is_error": result.is_error,
+                    }
+                )
+            if turn.text:
+                content.append({"type": "text", "text": turn.text})
+            for call in turn.tool_calls:
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": call.id,
+                        "name": call.name,
+                        "input": call.arguments,
+                    }
+                )
+            if content:
+                messages.append({"role": turn.role, "content": content})
+        return messages
+
+    def converse(
+        self,
+        turns: list[Turn],
+        tools: list[ToolSpec],
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 2000,
+    ) -> ToolTurn:
+        response = self._create(
+            max_tokens=max_tokens,
+            system=system or self._sdk.NOT_GIVEN,
+            messages=self._encode(turns),
+            tools=[
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                }
+                for tool in tools
+            ],
+        )
+
+        text = "".join(b.text for b in response.content if b.type == "text")
+        calls = [
+            ToolCall(id=b.id, name=b.name, arguments=dict(b.input or {}))
+            for b in response.content
+            if b.type == "tool_use"
+        ]
+        return ToolTurn(
+            text=text,
+            tool_calls=calls,
+            provider=self.provider,
+            model=self.model,
+            stop_reason=response.stop_reason or "",
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            raw=response,
+        )
+
 
 # --------------------------------------------------------------------------- #
 # OpenAI
@@ -193,6 +354,103 @@ class OpenAIClient:
         )
         return json.loads(response.choices[0].message.content or "{}")
 
+    # -- 도구 사용 -------------------------------------------------------- #
+
+    @staticmethod
+    def _encode(turns: list[Turn]) -> list[dict[str, Any]]:
+        """중립 이력을 OpenAI 메시지로 옮긴다.
+
+        도구 결과는 **별도의 tool 역할 메시지**가 된다 (Anthropic 과 다른 지점).
+        """
+        messages: list[dict[str, Any]] = []
+        for turn in turns:
+            for result in turn.tool_results:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": result.call_id,
+                        "content": result.content,
+                    }
+                )
+            if turn.tool_calls:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": turn.text or None,
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.name,
+                                    "arguments": json.dumps(
+                                        call.arguments, ensure_ascii=False
+                                    ),
+                                },
+                            }
+                            for call in turn.tool_calls
+                        ],
+                    }
+                )
+            elif turn.text:
+                messages.append({"role": turn.role, "content": turn.text})
+        return messages
+
+    def converse(
+        self,
+        turns: list[Turn],
+        tools: list[ToolSpec],
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 2000,
+    ) -> ToolTurn:
+        messages: list[dict[str, Any]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.extend(self._encode(turns))
+
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=max_tokens,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.input_schema,
+                    },
+                }
+                for tool in tools
+            ],
+        )
+
+        choice = response.choices[0]
+        calls = []
+        for raw_call in choice.message.tool_calls or []:
+            try:
+                arguments = json.loads(raw_call.function.arguments or "{}")
+            except json.JSONDecodeError:
+                # 인자가 깨져 와도 대화를 끊지 않는다. 도구 계층이 스키마 오류로
+                # 걸러내고, 모델에게 그 사실을 돌려주면 다시 시도할 수 있다.
+                arguments = {}
+            calls.append(
+                ToolCall(id=raw_call.id, name=raw_call.function.name, arguments=arguments)
+            )
+
+        usage = response.usage
+        return ToolTurn(
+            text=choice.message.content or "",
+            tool_calls=calls,
+            provider=self.provider,
+            model=self.model,
+            stop_reason=choice.finish_reason or "",
+            input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+            output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            raw=response,
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Mock
@@ -215,6 +473,7 @@ class MockClient:
     structured_handler: Optional[
         Callable[[str, dict[str, Any], Optional[str]], dict[str, Any]]
     ] = None
+    tool_handler: Optional[Callable[[list["Turn"], list["ToolSpec"]], "ToolTurn"]] = None
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     def complete(
@@ -248,6 +507,55 @@ class MockClient:
         if self.structured_handler:
             return self.structured_handler(prompt, schema, system)
         return _empty_from_schema(schema)
+
+    def converse(
+        self,
+        turns: list[Turn],
+        tools: list[ToolSpec],
+        *,
+        system: Optional[str] = None,
+        max_tokens: int = 2000,
+    ) -> ToolTurn:
+        self.calls.append(
+            {
+                "kind": "converse",
+                "turns": turns,
+                "tools": [t.name for t in tools],
+                "system": system,
+            }
+        )
+        if self.tool_handler:
+            return self.tool_handler(turns, tools)
+        return _default_mock_turn(turns, tools)
+
+
+def _default_mock_turn(turns: list[Turn], tools: list[ToolSpec]) -> ToolTurn:
+    """핸들러가 없을 때의 기본 도구 사용 동작.
+
+    도구 결과를 아직 못 받았으면 첫 번째 도구를 빈 인자로 부르고, 결과를 받았으면
+    그것을 요약한 텍스트로 마무리한다. **키 없이도 루프가 두 바퀴 도는지** 확인할
+    수 있게 하려는 것이다. 인자를 비워 두는 것도 의도적이다 — 도구 계층이 스키마
+    오류를 어떻게 돌려주는지가 함께 확인된다.
+    """
+    answered = any(turn.tool_results for turn in turns)
+
+    if tools and not answered:
+        return ToolTurn(
+            text="",
+            tool_calls=[ToolCall(id="mock-call-1", name=tools[0].name, arguments={})],
+            provider=Provider.MOCK.value,
+            model="mock",
+            stop_reason="tool_use",
+        )
+
+    outputs = [r.content for turn in turns for r in turn.tool_results]
+    summary = outputs[-1][:200] if outputs else "확인할 계산 결과가 없습니다."
+    return ToolTurn(
+        text=f"[mock 응답] 계산 결과를 확인했습니다: {summary}",
+        provider=Provider.MOCK.value,
+        model="mock",
+        stop_reason="end_turn",
+    )
 
 
 def _default_mock_text(prompt: str) -> str:

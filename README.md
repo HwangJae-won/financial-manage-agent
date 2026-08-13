@@ -49,7 +49,7 @@ core/            결정론적 계산. LLM·UI 의존성 없음
   samples.py       데모 페르소나
 agents/          LLM 계층. core/ 의 결과를 사람의 말로 옮긴다
   config.py        .env 로더, 프로바이더 결정 (anthropic/openai/mock)
-  llm.py           세 프로바이더를 같은 인터페이스로 감싼다
+  llm.py           세 프로바이더를 같은 인터페이스로 (complete/structured/converse)
   slots.py         질문 12개와 우선순위
   parsing.py       한국어 금액·연도 파서
   profiling.py     LangGraph 대화형 프로파일링
@@ -62,7 +62,7 @@ app/             Streamlit UI (데모 안전망 — 웹이 깨져도 돌아간�
 web/             FastAPI + 순수 HTML/CSS/JS 프런트엔드
   api.py           core/agents 를 HTTP 로 감싸는 얇은 어댑터
   static/          빌드 도구 없는 프런트엔드
-tests/           pytest (353개)
+tests/           pytest (361개)
 ```
 
 `schedule.py`가 분리되어 있는 이유: 퇴직월·연금개시월 안분과 물가연동처럼 틀리기
