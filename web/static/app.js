@@ -248,6 +248,7 @@ function renderAnalysis(data) {
   renderScenarios(data.scenarios, data.monte_carlo);
   renderEvents(data.profile.life_events || []);
   loadSeverance();
+  loadHealthInsurance();
   loadPrescriptions();
   loadSensitivity();
 }
@@ -600,6 +601,113 @@ function renderSeverance(result) {
   box.appendChild(el("div", "advice", `이렇게 하세요 — ${result.verdict}`));
   const notes = el("ul", "hint");
   result.notes.forEach((note) => notes.appendChild(el("li", null, note)));
+  box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
+/* 건강보험료 절벽                                                       */
+/* ------------------------------------------------------------------ */
+
+async function loadHealthInsurance() {
+  const box = $("#health-insurance");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+
+  // 빈 칸은 0이 아니라 **모름**이다. 0으로 보내면 서버가 계산해 버린다.
+  const won = (sel) => {
+    const raw = $(sel).value.trim();
+    return raw === "" ? null : Number(raw) * MAN;
+  };
+  const family = $("#hi-family").value;
+
+  try {
+    renderHealthInsurance(
+      await api("/api/health-insurance", {
+        method: "POST",
+        body: JSON.stringify({
+          profile,
+          monthly_salary: won("#hi-salary"),
+          property_tax_base: won("#hi-property"),
+          has_employed_family: family === "" ? null : family === "yes",
+        }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderHealthInsurance(report) {
+  const box = $("#health-insurance");
+  box.innerHTML = "";
+
+  const safe = report.cliff_year === null;
+  box.appendChild(el("div", `alert ${safe ? "alert-ok" : "alert-warn"}`, report.headline));
+
+  // 절벽까지 남은 거리. 이 화면에서 가장 중요한 숫자다 —
+  // "지금 얼마"가 아니라 "얼마 남았나"가 결정을 바꾼다.
+  const grid = el("div", "stat-grid");
+  [
+    ["합산소득", report.counted_income_label, "피부양자 판정에 들어가는 소득"],
+    ["소득 한도까지", report.income_headroom_label, "이만큼 늘면 탈락합니다"],
+    [
+      "이자·배당 계단까지",
+      report.financial_headroom_label,
+      report.headroom_rate_label
+        ? `수익률 ${report.headroom_rate_label} — 넘으면 전액이 합산됩니다`
+        : "넘으면 전액이 합산됩니다",
+    ],
+    [
+      "탈락 시점",
+      report.cliff_year === null ? "없음" : `${report.cliff_year}년`,
+      report.cliff_age === null ? "지금 기준이 유지된다면" : `만 ${report.cliff_age}세`,
+    ],
+  ].forEach(([label, value, note]) => {
+    const card = el("div", "stat");
+    card.appendChild(el("div", "stat-label", label));
+    card.appendChild(el("div", "stat-value", value));
+    card.appendChild(el("div", "stat-note", note));
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
+
+  const table = el("table");
+  const thead = el("thead");
+  const header = el("tr");
+  ["가입 방법", "매달", "1년", "근거"].forEach((text) =>
+    header.appendChild(el("th", null, text)),
+  );
+  thead.appendChild(header);
+  table.appendChild(thead);
+
+  const tbody = el("tbody");
+  [report.dependent, report.local, report.voluntary].forEach((path) => {
+    const row = el("tr");
+    row.appendChild(el("td", null, path.available ? path.method : `${path.method} (해당 없음)`));
+    row.appendChild(el("td", null, path.monthly_label));
+    row.appendChild(el("td", null, path.annual_label));
+    row.appendChild(el("td", null, path.basis.replace(/\*\*/g, "")));
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  box.appendChild(table);
+
+  if (report.depletion_advanced_years > 0) {
+    box.appendChild(
+      el(
+        "div",
+        "alert alert-warn",
+        `보험료를 넣으면 금융자산이 바닥나는 시점이 ${report.depletion_advanced_years}년 ` +
+          `앞당겨집니다 (평생 ${report.total_premiums_label}).`,
+      ),
+    );
+  }
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${report.verdict}`));
+  const notes = el("ul", "hint");
+  report.notes.forEach((note) =>
+    notes.appendChild(el("li", null, note.replace(/\*\*/g, ""))),
+  );
   box.appendChild(notes);
 }
 
@@ -1002,6 +1110,8 @@ async function init() {
   setupFraud();
   $("#target-age").addEventListener("change", loadPrescriptions);
   $("#pension-years").addEventListener("change", loadSeverance);
+  $("#hi-apply").addEventListener("click", loadHealthInsurance);
+  $("#hi-family").addEventListener("change", loadHealthInsurance);
   loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>

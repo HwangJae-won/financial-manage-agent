@@ -33,6 +33,7 @@ from core.models import SimulationResult, UserProfile
 from core.montecarlo import MonteCarloResult, run_monte_carlo
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
+from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.severance import SeveranceComparison, compare_severance_options
 from core.policy import (
     DEFAULT_POLICY_KEY,
@@ -151,6 +152,27 @@ class SeveranceRequest(BaseModel):
     """퇴직금 수령 방식 비교 요청."""
 
     pension_years: Optional[int] = Field(default=None, ge=1, le=40)
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
+
+
+class HealthInsuranceRequest(BaseModel):
+    """퇴직 후 건강보험료 요청.
+
+    세 값은 전부 선택이다. 없으면 없는 대로 계산하고 **모르는 부분은 모른다고
+    화면에 적어 보낸다** — 기본값으로 채우면 사용자가 그 숫자를 믿게 된다.
+    """
+
+    monthly_salary: Optional[int] = Field(
+        default=None, ge=0, description="퇴직 전 월 급여(원). 임의계속가입 보험료의 기준"
+    )
+    property_tax_base: Optional[int] = Field(
+        default=None, ge=0, description="재산세 고지서의 과세표준(원)"
+    )
+    has_employed_family: Optional[bool] = Field(
+        default=None, description="직장 다니는 배우자·자녀가 있는지"
+    )
     profile: Optional[UserProfile] = None
     session_id: Optional[str] = None
     sample: Optional[str] = None
@@ -353,6 +375,18 @@ def severance(request: SeveranceRequest) -> SeveranceComparison:
     """퇴직금을 일시금으로 받을지 연금으로 받을지 (기능 ⑤)."""
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return compare_severance_options(profile, pension_years=request.pension_years)
+
+
+@app.post("/api/health-insurance", response_model=HealthInsuranceReport)
+def health_insurance(request: HealthInsuranceRequest) -> HealthInsuranceReport:
+    """퇴직하면 건강보험료가 언제 얼마나 생기는지 (피부양자 절벽)."""
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return analyze_health_insurance(
+        profile,
+        monthly_salary=request.monthly_salary,
+        property_tax_base_override=request.property_tax_base,
+        has_employed_family=request.has_employed_family,
+    )
 
 
 @app.post("/api/sensitivity", response_model=SensitivityReport)

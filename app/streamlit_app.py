@@ -40,6 +40,7 @@ from core.montecarlo import run_monte_carlo
 from core.policy import PolicyImpact, analyze_policy_impact
 from core.prescribe import PrescriptionSet, prescribe
 from core.sensitivity import SensitivityReport, analyze_sensitivity
+from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.severance import SeveranceComparison, compare_severance_options
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
@@ -95,6 +96,19 @@ def profile_form() -> UserProfile:
         retirement_month = st.number_input(
             "퇴직(예정) 월", 1, 12, base.retirement_month, step=1
         )
+        # 근속연수와 퇴직 전 급여는 세금·건강보험료의 핵심 변수다. 여기가 비어 있으면
+        # 그 두 화면은 계산하지 않고 물어본다 — 기본값으로 채우지 않는다.
+        years_employed = st.number_input(
+            "근속연수", 0, 50, base.years_employed, step=1, help="0이면 퇴직소득세를 계산하지 않습니다"
+        )
+        last_salary = st.number_input(
+            "퇴직 전 월 급여(만원)",
+            0,
+            5_000,
+            base.last_monthly_salary // MAN,
+            step=10,
+            help="0이면 임의계속가입 보험료를 계산하지 않습니다",
+        )
         risk = st.select_slider(
             "투자성향",
             options=[r.value for r in RiskTolerance],
@@ -147,6 +161,8 @@ def profile_form() -> UserProfile:
         birth_month=birth_month,
         retirement_year=retirement_year,
         retirement_month=retirement_month,
+        years_employed=years_employed,
+        last_monthly_salary=last_salary * MAN,
         risk_tolerance=RiskTolerance(risk),
         severance_pay=severance * MAN,
         cash_savings=cash * MAN,
@@ -627,6 +643,78 @@ def render_severance(profile: UserProfile) -> None:
         st.caption(note)
 
 
+def render_health_insurance(profile: UserProfile) -> None:
+    """퇴직 후 건강보험료 절벽."""
+    st.subheader("퇴직하면 건강보험료가 얼마나 나오나")
+    st.caption(
+        "직장에 다니실 땐 회사가 절반을 냈습니다. 퇴직하면 그 자격이 없어집니다. "
+        "직장 다니는 배우자·자녀의 피부양자가 되면 0원이지만, 소득이 기준을 넘으면 "
+        "연 수백만원이 새로 생깁니다."
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        family = st.selectbox(
+            "직장 다니는 배우자·자녀", ["모르겠어요", "있습니다", "없습니다"]
+        )
+    with col2:
+        property_base = st.number_input(
+            "재산세 과세표준(만원)",
+            0,
+            500_000,
+            0,
+            step=1_000,
+            help="0이면 부동산 시가에서 추정합니다",
+        )
+
+    report: HealthInsuranceReport = analyze_health_insurance(
+        profile,
+        property_tax_base_override=property_base * MAN if property_base else None,
+        has_employed_family=None if family == "모르겠어요" else family == "있습니다",
+    )
+
+    if report.cliff_year is None:
+        st.success(report.headline)
+    else:
+        st.warning(report.headline)
+
+    cols = st.columns(4)
+    cols[0].metric("합산소득", report.counted_income_label)
+    cols[1].metric("소득 한도까지", report.income_headroom_label)
+    cols[2].metric("이자·배당 계단까지", report.financial_headroom_label)
+    cols[3].metric(
+        "탈락 시점",
+        "없음" if report.cliff_year is None else f"{report.cliff_year}년",
+    )
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "가입 방법": path.method if path.available else f"{path.method} (해당 없음)",
+                    "매달": path.monthly_label,
+                    "1년": path.annual_label,
+                    "근거": path.basis.replace("**", ""),
+                }
+                for path in (report.dependent, report.local, report.voluntary)
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    if report.depletion_advanced_years > 0:
+        st.warning(
+            f"보험료를 넣으면 금융자산이 바닥나는 시점이 "
+            f"{report.depletion_advanced_years}년 앞당겨집니다 "
+            f"(평생 {report.total_premiums_label})."
+        )
+
+    st.info(f"**이렇게 하세요** — {report.verdict}")
+    for note in report.notes:
+        st.caption(note.replace("**", ""))
+
+
 def render_prescriptions(profile: UserProfile) -> None:
     """진단 다음에 오는 것 — 그래서 무엇을 하면 되는가."""
     st.subheader("그래서 무엇을 하면 되나")
@@ -793,6 +881,8 @@ def main() -> None:
     render_scenarios(scenarios)
     st.divider()
     render_severance(profile)
+    st.divider()
+    render_health_insurance(profile)
     st.divider()
     render_prescriptions(profile)
     st.divider()

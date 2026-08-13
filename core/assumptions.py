@@ -32,9 +32,44 @@ class TaxAssumption(BaseModel):
     comprehensive_threshold: int
 
 
+class DependentAssumption(BaseModel):
+    """피부양자 자격 요건. 하나라도 넘기면 보험료가 0원에서 연 수백만원이 된다."""
+
+    income_limit: int = 20_000_000
+    financial_income_limit: int = 10_000_000
+    property_limit: int = 540_000_000
+    property_soft_limit: int = 360_000_000
+    soft_limit_income_limit: int = 10_000_000
+
+
+class LocalPremiumAssumption(BaseModel):
+    """지역가입자 보험료 산정. 요율은 매년 바뀐다."""
+
+    health_rate: float = 0.0709
+    long_term_care_rate: float = 0.1295
+    pension_income_share: float = 0.50
+    minimum_monthly: int = 19_780
+
+
+class VoluntaryEnrollmentAssumption(BaseModel):
+    """임의계속가입 — 퇴직 직후의 완충장치."""
+
+    max_months: int = 36
+    employee_share: float = 0.50
+    min_service_years: int = 1
+
+
 class HealthInsuranceAssumption(BaseModel):
     effective_rate_on_financial_income: float
     exemption_threshold: int
+
+    # 아래 항목들은 기본값을 둔다. 이 항목이 없는 예전 YAML 도 계속 읽혀야 한다.
+    dependent: DependentAssumption = Field(default_factory=DependentAssumption)
+    local: LocalPremiumAssumption = Field(default_factory=LocalPremiumAssumption)
+    voluntary: VoluntaryEnrollmentAssumption = Field(
+        default_factory=VoluntaryEnrollmentAssumption
+    )
+    property_tax_base_ratio: float = Field(default=0.42, gt=0.0, le=1.0)
 
 
 class PensionStartAgeBand(BaseModel):

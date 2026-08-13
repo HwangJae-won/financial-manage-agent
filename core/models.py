@@ -80,6 +80,14 @@ class UserProfile(BaseModel):
     birth_month: int = Field(default=1, ge=1, le=12, description="출생월")
     dependents: int = Field(default=0, ge=0, description="부양가족 수")
     years_employed: int = Field(default=0, ge=0, description="재직 기간(년)")
+    last_monthly_salary: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "퇴직 전 월 급여(보수월액). 건강보험 임의계속가입 보험료의 기준이 된다. "
+            "0이면 '모름' — 추측하지 않고 물어본다."
+        ),
+    )
     risk_tolerance: RiskTolerance = RiskTolerance.MODERATE
 
     # --- 퇴직 시점 ---

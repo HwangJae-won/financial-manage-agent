@@ -128,6 +128,41 @@
           </div>
           <div id="severance"></div>
 
+          <h3>퇴직하면 건강보험료가 얼마나 나오나</h3>
+          <p class="section-note">
+            직장에 다니실 땐 회사가 절반을 냈습니다. 퇴직하면 그 자격이 없어집니다.
+            직장 다니는 배우자·자녀의 <strong>피부양자</strong>가 되면 0원이지만,
+            소득이 기준을 넘으면 <strong>연 수백만원</strong>이 새로 생깁니다.
+          </p>
+          <div class="row-actions">
+            <label for="hi-salary">퇴직 전 월 급여(만원)</label>
+            <input
+              id="hi-salary"
+              type="number"
+              min="0"
+              max="10000"
+              step="10"
+              placeholder="예: 500"
+            />
+            <label for="hi-family">직장 다니는 배우자·자녀</label>
+            <select id="hi-family">
+              <option value="" selected>모르겠어요</option>
+              <option value="yes">있습니다</option>
+              <option value="no">없습니다</option>
+            </select>
+            <label for="hi-property">재산세 과세표준(만원)</label>
+            <input
+              id="hi-property"
+              type="number"
+              min="0"
+              max="500000"
+              step="1000"
+              placeholder="고지서에 적힌 금액"
+            />
+            <button id="hi-apply" type="button" class="btn btn-secondary">다시 계산</button>
+          </div>
+          <div id="health-insurance"></div>
+
           <h3>예정된 큰 지출</h3>
           <p class="section-note">
             자녀 결혼자금, 목돈 의료비, 주택 수리처럼 <strong>한 번에 나가는 큰돈</strong>은

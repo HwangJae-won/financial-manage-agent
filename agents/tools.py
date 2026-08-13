@@ -37,6 +37,7 @@ from core.models import LifeEvent, UserProfile
 from core.policy import DEFAULT_POLICY_KEY, analyze_policy_impact, load_policy_catalog
 from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
+from core.health_insurance import analyze_health_insurance
 from core.severance import compare_severance_options
 from core.sensitivity import analyze_sensitivity
 
@@ -111,6 +112,25 @@ class PolicyArgs(_Args):
 class SeveranceArgs(_Args):
     pension_years: Optional[int] = Field(
         default=None, ge=1, le=40, description="연금으로 나눠 받을 기간(년). 생략하면 10년"
+    )
+
+
+class HealthInsuranceArgs(_Args):
+    monthly_salary: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=MAX_WON,
+        description="퇴직 전 월 급여(원). 임의계속가입 보험료 계산에 쓴다. 모르면 생략",
+    )
+    property_tax_base: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=MAX_WON,
+        description="재산세 고지서의 과세표준(원). 생략하면 부동산 시가에서 추정한다",
+    )
+    has_employed_family: Optional[bool] = Field(
+        default=None,
+        description="직장에 다니는 배우자·자녀가 있는지. 모르면 생략",
     )
 
 
@@ -289,6 +309,46 @@ def _run_severance(
     }
 
 
+def _run_health_insurance(
+    profile: UserProfile, assumptions: Assumptions, args: HealthInsuranceArgs
+) -> dict[str, Any]:
+    result = analyze_health_insurance(
+        profile,
+        monthly_salary=args.monthly_salary,
+        property_tax_base_override=args.property_tax_base,
+        has_employed_family=args.has_employed_family,
+        assumptions=assumptions,
+    )
+    return {
+        "지금_피부양자인가": result.qualifies_at_retirement,
+        "탈락_시점": (
+            f"{result.cliff_year}년 (만 {result.cliff_age}세)"
+            if result.cliff_year is not None
+            else "시뮬레이션 기간 안에는 없음"
+        ),
+        "탈락_이유": result.cliff_reason,
+        "합산소득": result.counted_income_label,
+        "한도까지_여유": result.income_headroom_label,
+        "금융소득": result.financial_income_label,
+        "금융소득_계단까지_여유": result.financial_headroom_label,
+        "지역가입자": {
+            "월": result.local.monthly_label,
+            "연": result.local.annual_label,
+            "근거": result.local.basis,
+        },
+        "임의계속가입": {
+            "가능": result.voluntary.available,
+            "월": result.voluntary.monthly_label,
+            "근거": result.voluntary.basis,
+        },
+        "평생_부담": result.total_premiums_label,
+        "고갈_변화": f"{result.depletion_age_before} → {result.depletion_age_after}",
+        "한_문장": result.headline,
+        "결론": result.verdict,
+        "주의": result.notes,
+    }
+
+
 def _run_message(
     profile: UserProfile, assumptions: Assumptions, args: MessageArgs
 ) -> dict[str, Any]:
@@ -332,6 +392,13 @@ def _sum_severance(args: SeveranceArgs, out: dict[str, Any]) -> str:
     return (
         f"퇴직금 {out['퇴직금']} 수령 방식 비교 → 일시금 세금 {out['일시금']['세금']} / "
         f"연금 {out['연금']['세금']}"
+    )
+
+
+def _sum_health_insurance(args: HealthInsuranceArgs, out: dict[str, Any]) -> str:
+    return (
+        f"퇴직 후 건강보험료 → 피부양자 탈락 {out['탈락_시점']} · "
+        f"지역가입자 월 {out['지역가입자']['월']}"
     )
 
 
@@ -436,6 +503,19 @@ TOOLS: tuple[Tool, ...] = (
         args_model=SeveranceArgs,
         handler=_run_severance,
         summarize=_sum_severance,
+    ),
+    Tool(
+        name="health_insurance_cliff",
+        description=(
+            "퇴직 후 건강보험료가 언제 얼마나 생기는지 계산한다. 직장 다니는 가족의 "
+            "피부양자로 들어가면 0원이지만, 합산소득이 연 2,000만원을 넘으면 지역가입자가 "
+            "되어 연 수백만원이 생긴다. 특히 금융소득은 연 1,000만원을 1원이라도 넘으면 "
+            "전액이 합산되는 절벽이다. '퇴직하면 건강보험료 얼마 나오나요', '예금 금리 "
+            "높은 데로 옮길까요' 같은 질문에 쓴다."
+        ),
+        args_model=HealthInsuranceArgs,
+        handler=_run_health_insurance,
+        summarize=_sum_health_insurance,
     ),
     Tool(
         name="check_message",

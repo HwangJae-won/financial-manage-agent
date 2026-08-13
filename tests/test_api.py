@@ -391,3 +391,48 @@ def test_severance_respects_the_pension_period(client):
 
 def test_severance_without_a_profile_is_a_400(client):
     assert client.post("/api/severance", json={}).status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# 건강보험료 절벽
+# --------------------------------------------------------------------------- #
+
+
+def test_health_insurance_cliff_for_the_demo_persona(client, finished_session):
+    body = client.post(
+        "/api/health-insurance", json={"session_id": finished_session}
+    ).json()
+
+    assert body["qualifies_at_retirement"] is True
+    assert body["cliff_year"] == 2031  # 국민연금이 개시되고 나서 한도를 넘는다
+    assert body["local"]["monthly"] > 0
+    assert body["notes"]
+
+
+def test_health_insurance_answers_the_unknowns_as_questions(client):
+    """급여를 모르면 임의계속가입 보험료를 지어내지 않고 물어본다."""
+    profile = client.get("/api/samples/demo").json()
+    profile["last_monthly_salary"] = 0
+
+    body = client.post("/api/health-insurance", json={"profile": profile}).json()
+    assert body["voluntary"]["available"] is False
+    assert "알려주시면" in body["voluntary"]["basis"]
+
+    with_salary = client.post(
+        "/api/health-insurance", json={"profile": profile, "monthly_salary": 5_000_000}
+    ).json()
+    assert with_salary["voluntary"]["available"] is True
+    assert with_salary["voluntary"]["monthly"] > 0
+
+
+def test_health_insurance_takes_a_real_property_tax_base(client):
+    body = client.post(
+        "/api/health-insurance", json={"sample": "demo", "property_tax_base": 600_000_000}
+    ).json()
+
+    assert body["property_assumed"] is False
+    assert body["qualifies_at_retirement"] is False  # 재산 한도 초과
+
+
+def test_health_insurance_without_a_profile_is_a_400(client):
+    assert client.post("/api/health-insurance", json={}).status_code == 400

@@ -18,6 +18,9 @@ DEMO_PROFILE = UserProfile(
     birth_month=12,
     dependents=1,
     years_employed=32,
+    # 퇴직금은 '30일분 평균임금 × 근속연수'다. 2억 ÷ 32년 = 월 625만원 —
+    # 급여를 따로 지어내지 않고 이미 정한 두 값에서 끌어낸다.
+    last_monthly_salary=6_250_000,
     risk_tolerance=RiskTolerance.MODERATE,
     retirement_year=2026,
     retirement_month=12,
@@ -40,6 +43,7 @@ DIVERSIFIED_PROFILE = UserProfile(
     birth_month=5,
     dependents=0,
     years_employed=28,
+    last_monthly_salary=5_350_000,  # 1.5억 ÷ 28년
     risk_tolerance=RiskTolerance.MODERATE,
     retirement_year=2027,
     retirement_month=6,
