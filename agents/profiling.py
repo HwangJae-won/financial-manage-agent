@@ -48,11 +48,37 @@ EXTRACTION_SYSTEM = f"""당신은 은퇴 자산 상담의 접수 담당자입니
 
 규칙:
 - 사용자가 **명시적으로 말한 것만** 채우세요. 언급하지 않은 항목은 반드시 null 로 두세요.
+- **금액 하나는 항목 하나에만 들어갑니다.** 같은 금액을 두 항목에 넣지 마세요.
+  낱말과 항목의 대응은 이렇습니다:
+    아파트 · 집 · 주택 · 부동산 · 빌라  → real_estate   (주식이 아닙니다)
+    주식 · 펀드 · ETF                   → equity
+    ISA                                 → isa
+    IRP · 퇴직연금 · 개인연금 · DC       → pension_dc
+    퇴직금 · 명예퇴직금                  → severance_pay
+    예금 · 적금 · 저축                   → cash_savings
+    대출 · 빚 · 융자                     → debt
+    월세 · 임대 · 근로수입               → other_monthly_income
 - 추측하지 마세요. "없어요", "하나도 없습니다" 라고 답한 항목만 0 으로 두세요.
-- 금액은 원 단위 정수입니다. "2억" → 200000000, "300만원" → 3000000, "5천" → 50000000.
-- 자산 대화에서 "5천", "3백" 처럼 만 단위를 생략하는 표현이 흔합니다. 문맥을 보고 판단하세요.
 - 연도는 4자리입니다. "올해", "내년" 은 아래에 주어진 오늘 날짜를 기준으로 계산하세요.
 - "66년생" 은 1966년생입니다.
+
+금액은 원 단위 정수입니다. **자릿수를 반드시 이대로 맞추세요.**
+    1억   = 100000000    (0 이 8개)
+    2억   = 200000000
+    5억   = 500000000
+    10억  = 1000000000   (0 이 9개)
+    1만원 = 10000
+    100만원 = 1000000
+    300만원 = 3000000
+    2천만원 = 20000000
+  "5천", "3백" 처럼 만 단위를 생략하는 표현이 흔합니다 — "예금 5천" 은 5000만원,
+  즉 50000000 입니다. 문맥을 보고 판단하세요.
+
+기간은 **개월 수**로 바꿔서 넣으세요. 년 단위로 그대로 두지 마세요.
+    "국민연금 32년 넣었습니다"  → national_pension_months = 384   (32 × 12)
+    "10년 가입했어요"           → national_pension_months = 120
+  단, 근속연수(years_employed)만은 **년 단위 그대로**입니다.
+    "32년 다녔습니다"           → years_employed = 32
 
 {NUMERIC_GUARDRAIL}"""
 
@@ -62,6 +88,8 @@ class ProfilingState(TypedDict, total=False):
 
     messages: list[dict[str, str]]
     slots: dict[str, Any]
+    # 규칙 파서가 대화 전체에서 읽어낸 금액. LLM 결과의 자릿수 교차검증에만 쓴다.
+    reference: dict[str, Any]
     asked: list[str]
     pending_question: Optional[str]
     done: bool
@@ -77,6 +105,7 @@ def new_state(today: Optional[_dt.date] = None) -> ProfilingState:
     return ProfilingState(
         messages=[],
         slots={},
+        reference={},
         asked=[],
         pending_question=None,
         done=False,
@@ -90,6 +119,61 @@ def new_state(today: Optional[_dt.date] = None) -> ProfilingState:
 # --------------------------------------------------------------------------- #
 # 노드
 # --------------------------------------------------------------------------- #
+
+
+# 금액이 들어가는 슬롯. 자릿수 교차검증 대상이다.
+_MONEY_SLOTS = frozenset(
+    {
+        "monthly_expense",
+        "severance_pay",
+        "cash_savings",
+        "national_pension_monthly",
+        "equity",
+        "isa",
+        "pension_dc",
+        "real_estate",
+        "other_monthly_income",
+        "debt",
+        "last_monthly_salary",
+    }
+)
+
+
+def reconcile_amounts(
+    extracted: dict[str, Any], reference: dict[str, Any]
+) -> dict[str, Any]:
+    """LLM 이 읽은 금액의 **자릿수만** 규칙 파서로 교차검증한다.
+
+    작은 모델은 "5억"을 50억으로, "300만원"을 3천만원으로 적는 실수를 한다.
+    매번 다른 슬롯에서 나기 때문에 프롬프트만으로는 닫히지 않는다. 그리고 이 오류는
+    조용하다 — 총자산이 7억에서 57억이 되어도 화면은 멀쩡해 보인다.
+
+    역할을 나눈다. **어느 항목인지는 LLM 이 판단하고, 숫자가 몇 자리인지는 글자를
+    그대로 읽는 파서가 판단한다.** 규칙 파서(`agents/mocks.py`)는 원래 이 목적으로
+    만들어 두었다 — "LLM 추출 결과의 교차검증 기준".
+
+    두 값이 **정확히 10의 거듭제곱 배**로 다를 때만 고친다. 그 외의 불일치는 서로
+    다른 것을 읽은 것이므로 건드리지 않는다. 좁게 잡지 않으면 멀쩡한 값까지 덮는다.
+
+    `reference` 는 **대화 전체에서 누적된** 규칙 파서의 결과다. 매 턴의 결과만
+    쓰면 안 된다 — 모델이 뒤쪽 턴에서 앞의 금액을 다시 뱉으며 자릿수를 틀리는데,
+    그때는 대화 창에 원문이 없어 대조할 것이 사라진다.
+    """
+    fixed = dict(extracted)
+
+    for slot in _MONEY_SLOTS & set(fixed) & set(reference):
+        theirs, ours = fixed.get(slot), reference.get(slot)
+        if not isinstance(theirs, int) or not isinstance(ours, int):
+            continue
+        if theirs == ours or theirs <= 0 or ours <= 0:
+            continue
+
+        larger, smaller = max(theirs, ours), min(theirs, ours)
+        ratio, remainder = divmod(larger, smaller)
+        if remainder == 0 and ratio in (10, 100, 1000, 10_000):
+            fixed[slot] = ours
+
+    return fixed
 
 
 def _make_extract_node(client: LLMClient):
@@ -114,11 +198,19 @@ def _make_extract_node(client: LLMClient):
             prompt, extraction_schema(), system=EXTRACTION_SYSTEM, max_tokens=1000
         )
 
+        # 규칙 파서로 이번 턴을 따로 읽어 **기준값을 누적**한다. 그런 다음 자릿수만
+        # 대조해 고친다. mock 클라이언트에서는 두 값이 같아 아무 일도 일어나지 않는다.
+        from agents.mocks import extract_slots
+
+        year = int(str(state.get("today") or "")[:4] or 0)
+        reference = {**(state.get("reference") or {}), **extract_slots(transcript, year)}
+        extracted = reconcile_amounts(extracted or {}, reference)
+
         slots = dict(state.get("slots") or {})
         for key, value in (extracted or {}).items():
             if value is not None:
                 slots[key] = value
-        return {"slots": slots}
+        return {"slots": slots, "reference": reference}
 
     return extract
 

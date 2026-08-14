@@ -399,3 +399,52 @@ def test_mock_client_records_every_extraction_call(agent: ProfilingAgent):
     calls = agent.client.calls
     assert calls and all(c["kind"] == "structured" for c in calls)
     assert "대화 내용" in calls[-1]["prompt"]
+
+
+# --------------------------------------------------------------------------- #
+# 자릿수 교차검증 — 작은 로컬 모델이 "5억"을 50억으로 적는 것을 막는다
+# --------------------------------------------------------------------------- #
+
+from agents.profiling import reconcile_amounts  # noqa: E402
+
+
+def test_a_ten_fold_slip_is_corrected():
+    """실제로 관측된 오류다. 총자산이 7억에서 57억이 되어도 화면은 멀쩡해 보인다."""
+    fixed = reconcile_amounts(
+        {"real_estate": 5_000_000_000, "monthly_expense": 30_000_000},
+        {"real_estate": 500_000_000, "monthly_expense": 3_000_000},
+    )
+
+    assert fixed["real_estate"] == 500_000_000
+    assert fixed["monthly_expense"] == 3_000_000
+
+
+def test_a_genuine_disagreement_is_left_alone():
+    """10의 거듭제곱이 아닌 차이는 서로 다른 것을 읽은 것이다. 덮으면 안 된다."""
+    fixed = reconcile_amounts({"cash_savings": 30_000_000}, {"cash_savings": 20_000_000})
+
+    assert fixed["cash_savings"] == 30_000_000
+
+
+def test_slots_the_parser_did_not_see_are_untouched():
+    """규칙 파서가 못 읽은 항목까지 건드리면 LLM 을 쓰는 의미가 없다."""
+    fixed = reconcile_amounts({"isa": 50_000_000}, {"cash_savings": 20_000_000})
+
+    assert fixed["isa"] == 50_000_000
+
+
+def test_non_money_slots_are_not_reconciled():
+    """가입월수·연도는 자릿수 규칙이 다르다. 금액 슬롯만 본다."""
+    fixed = reconcile_amounts(
+        {"national_pension_months": 384, "birth_year": 1966},
+        {"national_pension_months": 38, "birth_year": 196},
+    )
+
+    assert fixed["national_pension_months"] == 384
+    assert fixed["birth_year"] == 1966
+
+
+def test_the_mock_path_is_unaffected():
+    """mock 은 규칙 파서와 같은 값을 내므로 아무 일도 일어나지 않아야 한다."""
+    same = {"severance_pay": 200_000_000}
+    assert reconcile_amounts(same, same) == same
