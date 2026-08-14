@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from core.assumptions import Assumptions, load_assumptions
+
+
+@pytest.fixture(autouse=True, scope="session")
+def isolated_db(tmp_path_factory):
+    """테스트는 저장소를 건드리지 않는다.
+
+    기본 경로(`var/finagent.db`)를 그대로 쓰면 테스트를 돌릴 때마다 개발자의 실제
+    DB 에 세션이 쌓이고, 집계(`storage.advice_stats`)가 테스트 데이터로 오염된다.
+    """
+    import storage
+
+    path = tmp_path_factory.mktemp("db") / "test.db"
+    os.environ["FINAGENT_DB_PATH"] = str(path)
+    storage.reset()
+    yield path
+    storage.reset()
 
 
 @pytest.fixture

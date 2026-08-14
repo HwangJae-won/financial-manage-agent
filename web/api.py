@@ -4,8 +4,12 @@ W1 의 설계 원칙(`core/` 는 LLM·UI 를 모른다)이 여기서 배당금�
 Streamlit 에서 웹으로 넘어오면서 `core/` 와 `agents/` 는 **한 줄도 고치지 않았다.**
 이 파일은 그것들을 HTTP 로 감싸는 얇은 어댑터일 뿐이다.
 
-세션 저장은 메모리 딕셔너리다. 데모 범위에서는 충분하지만 프로세스를 재시작하면
-사라지고 여러 워커로 확장할 수 없다 — 실서비스로 가면 Redis 나 DB 로 옮겨야 한다.
+세션은 **sqlite 에 남는다**(`storage/`). 메모리 딕셔너리는 매 요청마다 객체를 다시
+만들지 않으려는 캐시일 뿐이고, 캐시에 없으면 저장소에서 되살린다. 프로세스를
+재시작해도 진행 중이던 상담이 이어진다.
+
+저장이 실패해도 응답은 나간다. 저장소는 편의 기능이지 서비스의 전제가 아니다 —
+키 없이도 전체 흐름이 돌아야 한다는 규칙과 같은 이유다.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from agents.llm import MockClient, get_client
 from agents.mocks import demo_handler, demo_tool_handler
 from agents.advisor import AdvisorReply
 from agents.graph import Supervisor, SupervisorReply
+import storage
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_years
@@ -57,8 +62,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# 세션 저장소 — 데모용 인메모리. 실서비스에서는 Redis/DB 로 교체할 것.
+# 살아 있는 Supervisor 캐시. **이제 진실의 출처는 sqlite 다** — 여기는 매 요청마다
+# 객체를 다시 만들지 않으려는 캐시일 뿐이고, 없으면 저장소에서 되살린다.
 _SESSIONS: dict[str, Supervisor] = {}
+_SESSION_USERS: dict[str, str] = {}
 _MAX_SESSIONS = 200
 
 
@@ -117,6 +124,29 @@ class ConversationState(BaseModel):
 
 class UserMessage(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+class UserRequest(BaseModel):
+    """사용자 식별. 인증이 아니다 — id 를 아는 것이 곧 신원이다."""
+
+    user_id: Optional[str] = Field(
+        default=None, description="브라우저가 들고 있던 id. 없으면 새로 만든다"
+    )
+    nickname: str = Field(default="", max_length=40)
+
+
+class UserInfo(BaseModel):
+    user_id: str
+    nickname: str = ""
+    sessions: list[dict[str, Any]] = Field(
+        default_factory=list, description="이 사용자의 지난 상담 목록 (최근 순)"
+    )
+
+
+class SessionRequest(BaseModel):
+    user_id: Optional[str] = Field(
+        default=None, description="있으면 이 사용자의 상담으로 묶는다"
+    )
 
 
 class Headline(BaseModel):
@@ -269,10 +299,82 @@ def _state_of(
 
 
 def _get_agent(session_id: str) -> Supervisor:
+    """세션을 찾는다. 메모리에 없으면 **저장소에서 되살린다.**
+
+    이 한 줄이 서버 재시작을 견디게 한다. 예전에는 프로세스가 죽으면 진행 중이던
+    상담이 통째로 사라졌다.
+    """
     agent = _SESSIONS.get(session_id)
-    if agent is None:
+    if agent is not None:
+        return agent
+
+    saved = storage.load_session(session_id)
+    if saved is None:
         raise HTTPException(404, "세션을 찾을 수 없습니다. 다시 시작해 주세요.")
+
+    agent = Supervisor.restore(saved, client=_client())
+    _SESSIONS[session_id] = agent
     return agent
+
+
+def _persist(session_id: str, agent: Supervisor, reply: Optional[SupervisorReply]) -> None:
+    """세션과 이번 주고받음을 남긴다.
+
+    **저장이 실패해도 응답은 나간다.** 디스크가 가득 찼다고 상담이 멈추면 안 된다.
+    저장소는 편의 기능이지 서비스의 전제가 아니다.
+    """
+    try:
+        storage.save_session(
+            session_id,
+            agent.dump(),
+            user_id=_SESSION_USERS.get(session_id),
+            done=agent.done,
+            ready=agent.ready,
+        )
+        # 프로파일 스냅샷은 **대화가 끝난 뒤에만.** 진행 중에는 슬롯이 하나씩
+        # 차면서 매 턴 다른 값이 되어, 남겨도 쓸 데 없는 중간 상태만 쌓인다.
+        if agent.done:
+            profile = agent.profile()
+            if profile is not None:
+                storage.save_profile(session_id, profile.model_dump_json())
+
+        if reply is not None:
+            advice = reply.advice
+            storage.record_exchange(
+                session_id,
+                question=reply.question,
+                answer=reply.text,
+                kind=reply.kind,
+                routed_to=reply.intent.value,
+                advice=(
+                    {
+                        "provider": getattr(agent.client, "provider", ""),
+                        "model": getattr(agent.client, "model", ""),
+                        "stop_reason": advice.stop_reason,
+                        "unverified_numbers": advice.unverified_numbers,
+                        "rounds": advice.rounds,
+                        "latency_ms": reply.latency_ms,
+                    }
+                    if advice is not None
+                    else None
+                ),
+                tool_runs=(
+                    [
+                        {
+                            "tool": step.tool,
+                            "arguments": step.arguments,
+                            "ok": step.ok,
+                            "summary": step.summary,
+                            "output": step.output,
+                        }
+                        for step in advice.trace
+                    ]
+                    if advice is not None
+                    else None
+                ),
+            )
+    except Exception:  # pragma: no cover - 저장 실패로 대화를 끊지 않는다
+        pass
 
 
 def _headline(
@@ -334,24 +436,54 @@ def health() -> Health:
     return Health(status="ok", llm=llm, active_sessions=len(_SESSIONS))
 
 
+@app.post("/api/users", response_model=UserInfo, status_code=201)
+def create_or_get_user(request: UserRequest) -> UserInfo:
+    """사용자를 만들거나 이미 있으면 그대로 돌려준다.
+
+    **인증이 아니다.** 브라우저가 들고 있는 uuid 하나가 신원의 전부이고 비밀번호도
+    이메일도 받지 않는다. 데모 범위의 결정이며 화면에도 그렇게 적는다.
+    """
+    user_id = storage.ensure_user(request.user_id, nickname=request.nickname)
+    saved = storage.get_user(user_id) or {}
+    return UserInfo(
+        user_id=user_id,
+        nickname=saved.get("nickname", ""),
+        sessions=storage.list_sessions(user_id),
+    )
+
+
 @app.post("/api/sessions", response_model=ConversationState, status_code=201)
-def create_session() -> ConversationState:
+def create_session(request: Optional[SessionRequest] = None) -> ConversationState:
     """상담을 시작하고 첫 질문을 돌려준다."""
     if len(_SESSIONS) >= _MAX_SESSIONS:
-        # 데모용 상한. 오래된 것부터 버린다.
+        # 메모리 캐시 상한. 버려도 저장소에 남아 있어 다시 부르면 되살아난다.
         for stale in list(_SESSIONS)[: _MAX_SESSIONS // 2]:
             _SESSIONS.pop(stale, None)
+            _SESSION_USERS.pop(stale, None)
 
     session_id = uuid.uuid4().hex
     agent = Supervisor(client=_client())
     agent.start()
     _SESSIONS[session_id] = agent
+
+    user_id = (request.user_id if request else None) or None
+    if user_id:
+        _SESSION_USERS[session_id] = storage.ensure_user(user_id)
+    _persist(session_id, agent, None)
     return _state_of(session_id, agent)
 
 
 @app.get("/api/sessions/{session_id}", response_model=ConversationState)
 def get_session(session_id: str) -> ConversationState:
     return _state_of(session_id, _get_agent(session_id))
+
+
+@app.delete("/api/sessions/{session_id}", status_code=204)
+def drop_session(session_id: str) -> None:
+    """세션과 딸린 기록을 지운다. '처음부터 다시'가 여기로 온다."""
+    _SESSIONS.pop(session_id, None)
+    _SESSION_USERS.pop(session_id, None)
+    storage.delete_session(session_id)
 
 
 @app.post("/api/sessions/{session_id}/messages", response_model=ConversationState)
@@ -364,6 +496,7 @@ def send_message(session_id: str, message: UserMessage) -> ConversationState:
     """
     agent = _get_agent(session_id)
     reply = agent.send(message.text)
+    _persist(session_id, agent, reply)
     return _state_of(session_id, agent, reply)
 
 

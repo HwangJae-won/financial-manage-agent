@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import datetime as _dt
+import uuid
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -33,6 +34,7 @@ from agents.llm import MockClient, get_client
 from agents.mocks import demo_handler, demo_tool_handler
 from agents.advisor import AdvisorReply
 from agents.graph import Supervisor
+import storage
 from core.asset_map import AssetMap, build_asset_map
 from core.cashflow import simulate
 from core.formatting import fmt_krw, fmt_months, fmt_pct, fmt_years
@@ -259,6 +261,62 @@ def llm_status() -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _persist(agent: Supervisor, reply) -> None:
+    """세션과 이번 주고받음을 저장소에 남긴다.
+
+    **실패해도 화면은 그대로 간다.** 저장소는 편의 기능이지 데모의 전제가 아니다 —
+    키 없이도 전체 흐름이 돌아야 한다는 규칙과 같은 이유다.
+    """
+    session_id = st.session_state.get("session_id")
+    if not session_id:
+        return
+    try:
+        storage.save_session(
+            session_id, agent.dump(), done=agent.done, ready=agent.ready
+        )
+        if agent.done:
+            profile = agent.profile()
+            if profile is not None:
+                storage.save_profile(session_id, profile.model_dump_json())
+
+        advice = getattr(reply, "advice", None)
+        storage.record_exchange(
+            session_id,
+            question=reply.question,
+            answer=reply.text,
+            kind=reply.kind,
+            routed_to=reply.intent.value,
+            advice=(
+                {
+                    "provider": getattr(agent.client, "provider", ""),
+                    "model": getattr(agent.client, "model", ""),
+                    "stop_reason": advice.stop_reason,
+                    "unverified_numbers": advice.unverified_numbers,
+                    "rounds": advice.rounds,
+                    "latency_ms": reply.latency_ms,
+                }
+                if advice is not None
+                else None
+            ),
+            tool_runs=(
+                [
+                    {
+                        "tool": step.tool,
+                        "arguments": step.arguments,
+                        "ok": step.ok,
+                        "summary": step.summary,
+                        "output": step.output,
+                    }
+                    for step in advice.trace
+                ]
+                if advice is not None
+                else None
+            ),
+        )
+    except Exception:  # pragma: no cover - 저장 실패로 데모를 멈추지 않는다
+        pass
+
+
 def render_conversation() -> UserProfile | None:
     """대화로 프로파일을 채운다. 완료되면 UserProfile 을 돌려준다.
 
@@ -266,8 +324,17 @@ def render_conversation() -> UserProfile | None:
     에이전트로 넘기므로, 입력창은 계속 열어 둔다.
     """
     if "agent" not in st.session_state:
-        agent = Supervisor(client=llm_client())
-        agent.start()
+        # 저장소에 남은 상담이 있으면 이어서 연다. Streamlit 은 스크립트를 매번
+        # 다시 돌리지만 session_state 가 살아 있어 평소에는 여기 오지 않는다 —
+        # 서버를 재시작했거나 브라우저를 새로 열었을 때가 이 경로다.
+        session_id = st.session_state.get("session_id") or uuid.uuid4().hex
+        saved = storage.load_session(session_id)
+        if saved is not None:
+            agent = Supervisor.restore(saved, client=llm_client())
+        else:
+            agent = Supervisor(client=llm_client())
+            agent.start()
+        st.session_state.session_id = session_id
         st.session_state.agent = agent
 
     agent: Supervisor = st.session_state.agent
@@ -293,7 +360,7 @@ def render_conversation() -> UserProfile | None:
                 placeholder = hint
 
         if answer := st.chat_input(placeholder):
-            agent.send(answer)
+            _persist(agent, agent.send(answer))
             st.rerun()
 
         if agent.ready:
@@ -340,6 +407,7 @@ def render_followup(agent: Supervisor) -> None:
         if column.button(question, use_container_width=True):
             reply = agent.send(question)
             st.session_state.last_advice = reply.advice
+            _persist(agent, reply)
             st.rerun()
 
     for message in agent.followups:
@@ -351,6 +419,7 @@ def render_followup(agent: Supervisor) -> None:
     if asked := st.chat_input("궁금한 점을 물어보세요"):
         reply = agent.send(asked)
         st.session_state.last_advice = reply.advice
+        _persist(agent, reply)
         st.rerun()
 
 
@@ -1162,6 +1231,10 @@ def main() -> None:
         "이 서비스는 특정 금융상품의 가입을 권유하지 않습니다."
     )
     st.caption("가정값의 근거는 `data/assumptions.yaml` 에 출처와 함께 기록되어 있습니다.")
+    st.caption(
+        "💾 **입력하신 내용은 이 서버에 저장됩니다.** 다시 오시면 지난 상담을 이어서 "
+        "보실 수 있습니다. 로그인은 없으며, 세션 식별자로만 구분합니다."
+    )
 
 
 if __name__ == "__main__":

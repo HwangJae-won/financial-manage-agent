@@ -567,3 +567,65 @@ def test_family_report_from_the_conversation(client, finished_session):
 
 def test_family_report_without_a_profile_is_a_400(client):
     assert client.post("/api/family-report", json={}).status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# 저장소 — 재시작을 견딘다
+# --------------------------------------------------------------------------- #
+
+
+def test_a_session_survives_losing_the_memory_cache(client, finished_session):
+    """서버 재시작을 흉내낸다. 캐시를 비워도 저장소에서 되살아나야 한다."""
+    import web.api as api
+
+    before = client.get(f"/api/sessions/{finished_session}").json()
+    api._SESSIONS.clear()
+
+    after = client.get(f"/api/sessions/{finished_session}").json()
+    assert after["done"] is True
+    assert len(after["messages"]) == len(before["messages"])
+
+
+def test_a_restored_session_keeps_answering(client, finished_session):
+    import web.api as api
+
+    api._SESSIONS.clear()
+    body = client.post(
+        f"/api/sessions/{finished_session}/messages",
+        json={"text": "국민연금을 더 내는 게 나을까요?"},
+    ).json()
+
+    assert body["kind"] == "advice"
+    assert body["advice"]["trace"]
+
+
+def test_a_user_can_list_their_sessions(client):
+    user = client.post("/api/users", json={"nickname": "김OO"}).json()
+    session_id = client.post(
+        "/api/sessions", json={"user_id": user["user_id"]}
+    ).json()["session_id"]
+
+    again = client.post("/api/users", json={"user_id": user["user_id"]}).json()
+    assert again["nickname"] == "김OO"
+    assert session_id in {row["id"] for row in again["sessions"]}
+
+
+def test_deleting_a_session_removes_it_everywhere(client):
+    session_id = client.post("/api/sessions").json()["session_id"]
+    client.post(f"/api/sessions/{session_id}/messages", json={"text": "1966년생입니다"})
+
+    assert client.delete(f"/api/sessions/{session_id}").status_code == 204
+    assert client.get(f"/api/sessions/{session_id}").status_code == 404
+
+
+def test_the_records_pile_up_for_evaluation(client, finished_session):
+    """도구 호출과 차단 여부가 남아야 로컬 모델을 붙인 뒤 집계할 수 있다."""
+    import storage
+
+    client.post(
+        f"/api/sessions/{finished_session}/messages",
+        json={"text": "건강보험료는 얼마나 나오나요?"},
+    )
+
+    assert any(row["tool"] for row in storage.tool_usage())
+    assert storage.advice_stats()["total"] > 0

@@ -11,6 +11,7 @@ const state = {
   sessionId: null,
   analysis: null,
   plainLanguage: false,
+  user: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -245,11 +246,50 @@ function renderRouted(data) {
   return box;
 }
 
+/* 사용자 식별 — 인증이 아니다. 브라우저가 들고 있는 id 하나가 신원의 전부이고,
+   그래서 이 기기에서만 지난 상담을 이어볼 수 있다. 화면에도 그렇게 적는다. */
+const USER_KEY = "finagent-user-id";
+
+async function ensureUser() {
+  try {
+    const info = await api("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ user_id: localStorage.getItem(USER_KEY) }),
+    });
+    localStorage.setItem(USER_KEY, info.user_id);
+    state.user = info;
+    return info;
+  } catch (_) {
+    // 저장소가 없어도 상담은 되어야 한다. 이어보기만 못 할 뿐이다.
+    return null;
+  }
+}
+
 async function startSession() {
   try {
-    renderConversation(await api("/api/sessions", { method: "POST" }));
+    const user = state.user || (await ensureUser());
+    renderConversation(
+      await api("/api/sessions", {
+        method: "POST",
+        body: JSON.stringify({ user_id: user?.user_id ?? null }),
+      }),
+    );
   } catch (err) {
     $("#chat-hint").textContent = err.message;
+  }
+}
+
+/** 지난 상담을 이어서 연다. 없으면 조용히 새로 시작한다. */
+async function resumeLastSession() {
+  const user = await ensureUser();
+  const last = user?.sessions?.[0];
+  if (!last) return false;
+
+  try {
+    renderConversation(await api(`/api/sessions/${last.id}`));
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -287,10 +327,20 @@ function setupChat() {
     }
   });
 
-  $("#btn-restart").addEventListener("click", () => {
+  $("#btn-restart").addEventListener("click", async () => {
+    // 이전 대화를 저장소에서도 지운다. '처음부터 다시'를 눌렀는데 지난 상담이
+    // 목록에 남아 있으면 지운 것이 아니다.
+    const previous = state.sessionId;
     state.analysis = null;
     $("#result-body").classList.add("hidden");
     $("#result-empty").classList.remove("hidden");
+    if (previous) {
+      try {
+        await api(`/api/sessions/${previous}`, { method: "DELETE" });
+      } catch (_) {
+        /* 지우기에 실패해도 새 상담은 시작한다 */
+      }
+    }
     startSession();
   });
 
@@ -1464,7 +1514,11 @@ async function init() {
     $("#llm-status").textContent = "서버 상태를 확인할 수 없습니다.";
   }
 
-  await startSession();
+  // 지난 상담이 있으면 이어서 연다. 시니어 사용자에게 12개 질문을 다시 물어보는
+  // 것이 가장 큰 이탈 요인이라, 이어보기가 저장소를 붙인 첫 번째 이유다.
+  if (!(await resumeLastSession())) {
+    await startSession();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", init);

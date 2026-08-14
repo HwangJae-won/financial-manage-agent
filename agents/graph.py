@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import time
 from enum import Enum
 from typing import Any, Optional
 
@@ -25,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from agents.advisor import Advisor, AdvisorReply
 from agents.fraud import FraudAssessment, analyze_message, detect_signals
-from agents.llm import LLMClient, get_client
+from agents.llm import LLMClient, get_client, turn_from_dict, turn_to_dict
 from agents.profiling import ProfilingAgent
 from core.models import UserProfile
 
@@ -196,6 +197,12 @@ class SupervisorReply(BaseModel):
         default=False, description="결과를 보여줘도 되는 상태인가"
     )
 
+    # 기록용. 화면은 쓰지 않지만 저장소가 그대로 받아 넣는다.
+    question: str = Field(default="", description="사용자가 보낸 원문")
+    latency_ms: int = Field(
+        default=0, description="이 한 번에 걸린 시간. 로컬 모델 응답 속도(L4)의 재료"
+    )
+
 
 NOT_READY_YET = (
     "그 질문은 계산이 끝난 다음에 정확히 답해 드릴 수 있습니다.\n"
@@ -262,6 +269,52 @@ class Supervisor:
     def ready(self) -> bool:
         return self.profiler.ready
 
+    # -- 저장·복원 --------------------------------------------------------- #
+
+    def dump(self) -> dict[str, Any]:
+        """세션을 저장 가능한 형태로.
+
+        세 칸이면 충분하다. 프로파일링 상태는 처음부터 "밖에서 들고 다니는"
+        설계였고(`agents/profiling.py`), 나머지 둘도 평범한 dict/dataclass 다.
+
+        `Toolbox.runs` 는 담지 않는다. 실행 기록은 질문 단위로 저장소에 남으므로
+        메모리에 다시 쌓을 이유가 없고, 담으면 세션 크기만 계속 커진다.
+        """
+        advisor = self._advisor
+        return {
+            "state": dict(self.profiler.state),
+            "after": list(self._after),
+            "advisor": [turn_to_dict(turn) for turn in advisor.turns] if advisor else [],
+        }
+
+    @classmethod
+    def restore(
+        cls,
+        payload: dict[str, Any],
+        *,
+        client: Optional[LLMClient] = None,
+        today: Optional[_dt.date] = None,
+    ) -> "Supervisor":
+        """`dump()` 을 되돌린다.
+
+        상담 에이전트는 프로파일이 있어야 만들어지므로 기존 지연 생성을 그대로
+        쓰고, 복원된 대화 이력만 얹는다. 프로파일이 아직 없으면 이력도 의미가
+        없으므로 조용히 버린다 — 그 상태에서는 상담 자체가 시작되지 않는다.
+        """
+        supervisor = cls(client=client, today=today)
+        supervisor.profiler.state = {
+            **supervisor.profiler.state,
+            **(payload.get("state") or {}),
+        }
+        supervisor._after = list(payload.get("after") or [])
+
+        turns = payload.get("advisor") or []
+        if turns:
+            advisor = supervisor.advisor()
+            if advisor is not None:
+                advisor.turns = [turn_from_dict(turn) for turn in turns]
+        return supervisor
+
     def build_profile(self) -> UserProfile:
         """완성된 프로파일. 아직이면 ValueError — 호출자가 400 으로 옮긴다."""
         return self.profiler.build_profile()
@@ -289,13 +342,19 @@ class Supervisor:
 
     def send(self, text: str) -> SupervisorReply:
         """입력 하나를 분류하고 해당 에이전트로 보낸다."""
+        started = time.perf_counter()
         routing = self._resolve(classify_intent(text, client=self.client))
 
         if routing.intent is Intent.FRAUD_CHECK:
-            return self._to_fraud(text, routing)
-        if routing.intent is Intent.RESULT:
-            return self._to_advisor(text, routing)
-        return self._to_profiler(text, routing)
+            reply = self._to_fraud(text, routing)
+        elif routing.intent is Intent.RESULT:
+            reply = self._to_advisor(text, routing)
+        else:
+            reply = self._to_profiler(text, routing)
+
+        reply.question = text
+        reply.latency_ms = int((time.perf_counter() - started) * 1000)
+        return reply
 
     def _resolve(self, routing: Routing) -> Routing:
         """진행 상태를 반영해 목적지를 정한다.

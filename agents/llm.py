@@ -96,6 +96,61 @@ class Turn:
     tool_results: list[ToolResult] = field(default_factory=list)
 
 
+def turn_to_dict(turn: Turn) -> dict[str, Any]:
+    """대화 한 칸을 저장 가능한 형태로.
+
+    `dataclasses.asdict` 를 쓰지 않는 이유는 빈 값까지 전부 실어 나르기 때문이다.
+    대화가 길어지면 대부분의 칸이 도구 없는 평범한 발화라, 빈 리스트를 빼면
+    저장 크기가 눈에 띄게 줄어든다.
+    """
+    data: dict[str, Any] = {"role": turn.role}
+    if turn.text:
+        data["text"] = turn.text
+    if turn.tool_calls:
+        data["tool_calls"] = [
+            {"id": call.id, "name": call.name, "arguments": call.arguments}
+            for call in turn.tool_calls
+        ]
+    if turn.tool_results:
+        data["tool_results"] = [
+            {
+                "call_id": result.call_id,
+                "content": result.content,
+                "is_error": result.is_error,
+            }
+            for result in turn.tool_results
+        ]
+    return data
+
+
+def turn_from_dict(data: dict[str, Any]) -> Turn:
+    """`turn_to_dict` 의 역. 모르는 키는 무시한다.
+
+    저장해 둔 대화를 나중 버전이 읽을 때 필드가 늘거나 줄 수 있다. 그때 예외로
+    터지면 사용자의 대화 이력이 통째로 날아간다 — 읽을 수 있는 만큼만 읽는다.
+    """
+    return Turn(
+        role="assistant" if data.get("role") == "assistant" else "user",
+        text=data.get("text") or "",
+        tool_calls=[
+            ToolCall(
+                id=call.get("id", ""),
+                name=call.get("name", ""),
+                arguments=call.get("arguments") or {},
+            )
+            for call in data.get("tool_calls") or []
+        ],
+        tool_results=[
+            ToolResult(
+                call_id=result.get("call_id", ""),
+                content=result.get("content", ""),
+                is_error=bool(result.get("is_error", False)),
+            )
+            for result in data.get("tool_results") or []
+        ],
+    )
+
+
 @dataclass
 class ToolTurn:
     """모델 응답 한 턴. 말을 하거나, 도구를 부르거나, 둘 다 한다."""
