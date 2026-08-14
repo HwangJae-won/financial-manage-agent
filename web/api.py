@@ -43,6 +43,7 @@ from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
+from core.medical_cost import MedicalCostReport, analyze_medical_cost
 from core.working_income import WorkingIncomeReport, analyze_working_income
 from core.policy import (
     DEFAULT_POLICY_KEY,
@@ -243,6 +244,21 @@ class NationalPensionRequest(BaseModel):
     )
     monthly_income_base: Optional[int] = Field(
         default=None, ge=0, description="기준소득월액(원). 생략하면 퇴직 전 월 급여"
+    )
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
+
+
+class MedicalCostRequest(BaseModel):
+    """의료비 충격 요청.
+
+    상한액은 소득분위별로 달라 이 서비스가 표를 들고 있지 않다. 모르면 생략하면
+    되고, 그때는 상한제를 반영하지 않은 값이라고 화면이 말한다.
+    """
+
+    annual_ceiling: Optional[int] = Field(
+        default=None, ge=0, description="본인부담상한액(연). 공단에서 확인한 값"
     )
     profile: Optional[UserProfile] = None
     session_id: Optional[str] = None
@@ -610,6 +626,13 @@ def working_income(request: SensitivityRequest) -> WorkingIncomeReport:
     """
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return analyze_working_income(profile)
+
+
+@app.post("/api/medical-cost", response_model=MedicalCostReport)
+def medical_cost(request: MedicalCostRequest) -> MedicalCostReport:
+    """의료비가 계획을 얼마나 흔드나. 본인부담상한제를 함께 본다."""
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return analyze_medical_cost(profile, annual_ceiling=request.annual_ceiling)
 
 
 @app.post("/api/sensitivity", response_model=SensitivityReport)

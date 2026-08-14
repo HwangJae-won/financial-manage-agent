@@ -313,6 +313,7 @@ def demo_handler(today_year: int):
 # 기록에 simulate_plan 이 찍힌다. 화면에 trace 를 띄우기 시작한 이상(A4) 그
 # 장면은 에이전트가 질문을 못 알아듣는 것처럼 보인다.
 TOOL_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("medical_cost", ("의료비", "병원비", "암", "아프", "치료비", "간병", "입원", "수술")),
     ("working_income", ("일하면", "재취업", "일자리", "벌면", "취업", "알바", "소득이 생기")),
     ("national_pension_options", ("국민연금", "추납", "임의계속", "가입기간")),
     ("health_insurance_cliff", ("건강보험", "건보료", "피부양자", "지역가입자")),

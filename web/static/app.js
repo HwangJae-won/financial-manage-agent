@@ -404,6 +404,7 @@ function renderAnalysis(data) {
   loadFamilyReport();
   loadPrescriptions();
   loadWorkingIncome();
+  loadMedicalCost();
   loadSensitivity();
 }
 
@@ -1108,6 +1109,69 @@ function renderWorkingIncome(report) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 병원비 — 본인부담상한제                                                */
+/* ------------------------------------------------------------------ */
+
+async function loadMedicalCost() {
+  const box = $("#medical-cost");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+  const raw = $("#mc-ceiling").value.trim();
+  try {
+    renderMedicalCost(
+      await api("/api/medical-cost", {
+        method: "POST",
+        body: JSON.stringify({
+          profile,
+          annual_ceiling: raw === "" ? null : Number(raw) * MAN,
+        }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderMedicalCost(report) {
+  const box = $("#medical-cost");
+  box.innerHTML = "";
+  const clean = (t) => (t || "").replace(/\*\*/g, "");
+
+  box.appendChild(
+    el("div", `alert ${report.ceiling_known ? "alert-ok" : "alert-warn"}`, clean(report.headline)),
+  );
+
+  const table = el("table");
+  const thead = el("thead");
+  const header = el("tr");
+  ["상황", "병원비", "실제 부담", "공단 환급", "자산 고갈", "앞당겨짐"].forEach((t) =>
+    header.appendChild(el("th", null, t)),
+  );
+  thead.appendChild(header);
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  report.scenarios.forEach((s) => {
+    const row = el("tr");
+    [
+      s.label,
+      s.total_cost_label,
+      s.out_of_pocket_label,
+      s.ceiling_applied ? s.refund_label : "—",
+      s.depletion_label,
+      s.years_lost ? `${s.years_lost}년` : "—",
+    ].forEach((v) => row.appendChild(el("td", null, v)));
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  box.appendChild(table);
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${clean(report.verdict)}`));
+  const notes = el("ul", "hint");
+  report.notes.forEach((n) => notes.appendChild(el("li", null, clean(n))));
+  box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
 /* 가족에게 보여줄 한 장                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -1592,6 +1656,7 @@ async function init() {
   $("#hi-apply").addEventListener("click", loadHealthInsurance);
   $("#hi-family").addEventListener("change", loadHealthInsurance);
   $("#np-apply").addEventListener("click", loadNationalPension);
+  $("#mc-apply").addEventListener("click", loadMedicalCost);
   loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>

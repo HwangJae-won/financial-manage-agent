@@ -629,3 +629,42 @@ def test_the_records_pile_up_for_evaluation(client, finished_session):
 
     assert any(row["tool"] for row in storage.tool_usage())
     assert storage.advice_stats()["total"] > 0
+
+
+# --------------------------------------------------------------------------- #
+# 재취업 소득 · 의료비
+# --------------------------------------------------------------------------- #
+
+
+def test_working_income_leads_with_what_is_not_cut(client):
+    body = client.post("/api/working-income", json={"sample": "demo"}).json()
+
+    assert body["reduction_applies"] is True
+    assert body["free_ceiling"] > body["a_value"]
+    assert "깎이지 않습니다" in body["headline"]
+
+
+def test_working_income_re_measures_the_prescription(client):
+    """처방 엔진의 권고를 건보료까지 넣어 다시 잰다."""
+    body = client.post("/api/working-income", json={"sample": "demo"}).json()
+
+    assert body["actual_needed_income"] > body["prescribed_income"]
+    assert body["actual_needed_income_label"] in body["verdict"]
+
+
+def test_medical_cost_without_a_ceiling_does_not_guess(client):
+    body = client.post("/api/medical-cost", json={"sample": "demo"}).json()
+
+    assert body["ceiling_known"] is False
+    assert all(s["refund"] == 0 for s in body["scenarios"])
+    assert "본인부담상한제" in body["headline"]
+
+
+def test_medical_cost_applies_a_supplied_ceiling(client):
+    body = client.post(
+        "/api/medical-cost", json={"sample": "demo", "annual_ceiling": 4_000_000}
+    ).json()
+
+    biggest = body["scenarios"][-1]
+    assert biggest["ceiling_applied"] is True
+    assert biggest["refund"] > 0

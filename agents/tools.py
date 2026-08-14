@@ -39,6 +39,7 @@ from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
 from core.health_insurance import analyze_health_insurance
 from core.national_pension import analyze_national_pension
+from core.medical_cost import analyze_medical_cost
 from core.working_income import analyze_working_income
 from core.severance import compare_severance_options
 from core.sensitivity import analyze_sensitivity
@@ -163,6 +164,15 @@ class WorkingIncomeArgs(_Args):
         ge=0,
         le=MAX_WON,
         description="벌어볼 월 소득(원). 생략하면 여러 구간을 한 번에 비교한다",
+    )
+
+
+class MedicalCostArgs(_Args):
+    annual_ceiling: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=MAX_WON,
+        description="본인부담상한액(연, 원). 모르면 생략한다 — 추측해서 넣지 말 것",
     )
 
 
@@ -465,6 +475,32 @@ def _run_working_income(
     }
 
 
+def _run_medical_cost(
+    profile: UserProfile, assumptions: Assumptions, args: MedicalCostArgs
+) -> dict[str, Any]:
+    result = analyze_medical_cost(
+        profile, annual_ceiling=args.annual_ceiling, assumptions=assumptions
+    )
+    return {
+        "상한액_알고_있나": result.ceiling_known,
+        "상한액": result.ceiling_label or "모름",
+        "의료비별_영향": [
+            {
+                "상황": s.label,
+                "병원비": s.total_cost_label,
+                "실제_부담": s.out_of_pocket_label,
+                "공단_환급": s.refund_label,
+                "고갈": s.depletion_label,
+                "앞당겨지는_햇수": s.years_lost,
+            }
+            for s in result.scenarios
+        ],
+        "한_문장": result.headline,
+        "결론": result.verdict,
+        "주의": result.notes,
+    }
+
+
 def _run_message(
     profile: UserProfile, assumptions: Assumptions, args: MessageArgs
 ) -> dict[str, Any]:
@@ -531,6 +567,13 @@ def _sum_working_income(args: WorkingIncomeArgs, out: dict[str, Any]) -> str:
     return (
         f"재취업 소득 검토 → 월 {out['연금이_안_깎이는_상한']}까지 연금 감액 없음 · "
         f"구간 {len(out['소득별_결과'])}개 비교"
+    )
+
+
+def _sum_medical_cost(args: MedicalCostArgs, out: dict[str, Any]) -> str:
+    return (
+        f"의료비 충격 검토 → 상한액 {out['상한액']} · "
+        f"{len(out['의료비별_영향'])}개 규모 비교"
     )
 
 
@@ -673,6 +716,19 @@ TOOLS: tuple[Tool, ...] = (
         args_model=WorkingIncomeArgs,
         handler=_run_working_income,
         summarize=_sum_working_income,
+    ),
+    Tool(
+        name="medical_cost",
+        description=(
+            "의료비가 은퇴 계획을 얼마나 흔드는지 계산한다. 건강보험 **본인부담상한제**가 "
+            "있어 1년 본인부담금이 상한을 넘으면 초과분을 공단이 돌려주므로, "
+            "'암 걸리면 수억'은 대부분 사실이 아니다. 다만 비급여·간병비는 상한에 "
+            "포함되지 않는다. '병원비 많이 나오면 어쩌죠', '암보험 들어야 하나요' 같은 "
+            "질문에 쓴다. 상한액은 소득분위별로 다르므로 **모르면 생략한다.**"
+        ),
+        args_model=MedicalCostArgs,
+        handler=_run_medical_cost,
+        summarize=_sum_medical_cost,
     ),
     Tool(
         name="check_message",

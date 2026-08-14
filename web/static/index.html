@@ -259,6 +259,20 @@
           </p>
           <div id="working-income"></div>
 
+          <h3>병원비가 많이 나오면 어떻게 되나</h3>
+          <p class="section-note">
+            건강보험에는 <strong>본인부담상한제</strong>가 있어, 1년 본인부담금이 정해진 금액을
+            넘으면 초과분을 공단이 돌려줍니다. 다만 <strong>비급여와 간병비</strong>는 여기
+            포함되지 않습니다.
+          </p>
+          <div class="row-actions">
+            <label for="mc-ceiling">본인부담상한액(만원)</label>
+            <input id="mc-ceiling" type="number" min="0" max="2000" step="10"
+                   placeholder="공단에서 확인한 금액" />
+            <button id="mc-apply" type="button" class="btn btn-secondary">다시 계산</button>
+          </div>
+          <div id="medical-cost"></div>
+
           <h3>이 결과는 얼마나 믿을 수 있나</h3>
           <p class="section-note">
             여기 나온 숫자는 모두 가정 위에 있습니다.

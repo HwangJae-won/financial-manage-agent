@@ -47,6 +47,7 @@ from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
+from core.medical_cost import MedicalCostReport, analyze_medical_cost
 from core.working_income import WorkingIncomeReport, analyze_working_income
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
@@ -1148,6 +1149,58 @@ def render_working_income(profile: UserProfile) -> None:
         st.caption(note.replace("**", ""))
 
 
+def render_medical_cost(profile: UserProfile) -> None:
+    """의료비 충격과 본인부담상한제.
+
+    이 연령대의 가장 큰 재무 공포다. 그리고 "암 걸리면 수억"이라는 말이 대부분
+    사실이 아니라는 것을 말할 수 있는 자리다.
+    """
+    st.subheader("병원비가 많이 나오면 어떻게 되나")
+    st.caption(
+        "건강보험에는 본인부담상한제가 있어, 1년 본인부담금이 정해진 금액을 넘으면 "
+        "초과분을 공단이 돌려줍니다. 다만 비급여와 간병비는 여기 포함되지 않습니다."
+    )
+
+    ceiling = st.number_input(
+        "본인부담상한액(만원)",
+        0,
+        2_000,
+        0,
+        step=10,
+        help="0이면 상한제를 반영하지 않습니다. 공단(1577-1000)이나 The건강보험 앱에서 확인하실 수 있습니다",
+    )
+    report: MedicalCostReport = analyze_medical_cost(
+        profile, annual_ceiling=ceiling * MAN if ceiling else None
+    )
+
+    if report.ceiling_known:
+        st.success(report.headline.replace("**", ""))
+    else:
+        st.info(report.headline.replace("**", ""))
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "상황": s.label,
+                    "병원비": s.total_cost_label,
+                    "실제 부담": s.out_of_pocket_label,
+                    "공단 환급": s.refund_label if s.ceiling_applied else "—",
+                    "자산 고갈": s.depletion_label,
+                    "앞당겨짐": f"{s.years_lost}년" if s.years_lost else "—",
+                }
+                for s in report.scenarios
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.info(f"**이렇게 하세요** — {report.verdict.replace('**', '')}")
+    for note in report.notes:
+        st.caption(note.replace("**", ""))
+
+
 def render_family_report(profile: UserProfile) -> None:
     """가족에게 보여줄 한 장 (기능 5).
 
@@ -1271,6 +1324,8 @@ def main() -> None:
     render_prescriptions(profile)
     st.divider()
     render_working_income(profile)
+    st.divider()
+    render_medical_cost(profile)
     st.divider()
     render_sensitivity(profile)
     st.divider()
