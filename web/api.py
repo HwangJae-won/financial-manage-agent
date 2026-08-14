@@ -44,6 +44,7 @@ from core.health_insurance import HealthInsuranceReport, analyze_health_insuranc
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
 from core.medical_cost import MedicalCostReport, analyze_medical_cost
+from core.timeline import TimelineReport, build_timeline, changes_since
 from core.working_income import WorkingIncomeReport, analyze_working_income
 from core.policy import (
     DEFAULT_POLICY_KEY,
@@ -633,6 +634,26 @@ def medical_cost(request: MedicalCostRequest) -> MedicalCostReport:
     """의료비가 계획을 얼마나 흔드나. 본인부담상한제를 함께 본다."""
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return analyze_medical_cost(profile, annual_ceiling=request.annual_ceiling)
+
+
+@app.post("/api/timeline", response_model=TimelineReport)
+def timeline(request: SensitivityRequest) -> TimelineReport:
+    """언제 무엇을 해야 하는가. 기한을 조건문이 아니라 날짜로.
+
+    세션이 있으면 **지난 상담 이후 무엇이 다가왔는지**까지 말한다 (기능 ⑨).
+    """
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+
+    if request.session_id:
+        saved = storage.load_session(request.session_id)
+        if saved and saved.get("created_at"):
+            try:
+                last_seen = _dt.date.fromisoformat(saved["created_at"][:10])
+                if last_seen < _dt.date.today():
+                    return changes_since(profile, last_seen)
+            except ValueError:
+                pass
+    return build_timeline(profile)
 
 
 @app.post("/api/sensitivity", response_model=SensitivityReport)

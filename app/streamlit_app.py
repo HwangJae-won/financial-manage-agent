@@ -48,6 +48,7 @@ from core.health_insurance import HealthInsuranceReport, analyze_health_insuranc
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
 from core.medical_cost import MedicalCostReport, analyze_medical_cost
+from core.timeline import TimelineReport, build_timeline
 from core.working_income import WorkingIncomeReport, analyze_working_income
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
@@ -1149,6 +1150,44 @@ def render_working_income(profile: UserProfile) -> None:
         st.caption(note.replace("**", ""))
 
 
+def render_timeline(profile: UserProfile) -> None:
+    """언제 무엇을 해야 하는가.
+
+    결과 화면 앞쪽에 둔다. 계산 결과보다 "그래서 언제까지 뭘 해야 하나"가 먼저
+    궁금하고, 놓치면 되돌릴 수 없는 것이 여기 있기 때문이다.
+    """
+    st.subheader("언제 무엇을 해야 하나")
+    st.caption(
+        "생년월일과 퇴직 시점에서 뽑은 실제 일정입니다. "
+        "기한이 있는 것은 놓치면 되돌릴 수 없습니다."
+    )
+
+    report: TimelineReport = build_timeline(profile)
+
+    # 기한 임박은 경고이지 오류가 아니다. 이 앱에서 st.error 는 "뭔가 잘못됐다"의
+    # 뜻으로 쓰고 있어서, 여기 섞으면 화면의 신호가 흐려진다.
+    if report.imminent:
+        st.warning(report.headline.replace("**", ""))
+    else:
+        st.info(report.headline.replace("**", ""))
+
+    for event in report.events:
+        if event.passed:
+            continue
+        icon = {"deadline": "⏰", "decision": "🔀"}.get(event.kind, "·")
+        with st.container(border=True):
+            st.markdown(f"**{icon} {event.when} (만 {event.age}세) — {event.title}**")
+            if event.detail:
+                st.caption(event.detail.replace("**", ""))
+            if event.where:
+                st.caption(f"어디서 — {event.where}")
+            if event.what:
+                st.caption(f"준비물 — {event.what}")
+
+    for note in report.notes:
+        st.caption(note.replace("**", ""))
+
+
 def render_medical_cost(profile: UserProfile) -> None:
     """의료비 충격과 본인부담상한제.
 
@@ -1305,6 +1344,8 @@ def main() -> None:
         )
 
     render_headline(profile, sim, amap)
+    st.divider()
+    render_timeline(profile)
     st.divider()
     render_asset_map(amap)
     st.divider()

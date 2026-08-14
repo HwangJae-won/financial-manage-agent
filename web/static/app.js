@@ -393,6 +393,7 @@ function renderAnalysis(data) {
 
   renderBriefing(data.briefing);
   renderStats(data.headline, data.assumed_fields);
+  loadTimeline();
   renderAssetMap(data.asset_map);
   renderBalanceChart(data.simulation);
   renderRiskScore(data.risk_score);
@@ -1103,6 +1104,53 @@ function renderWorkingIncome(report) {
   }
 
   box.appendChild(el("div", "advice", `이렇게 하세요 — ${clean(report.verdict)}`));
+  const notes = el("ul", "hint");
+  report.notes.forEach((n) => notes.appendChild(el("li", null, clean(n))));
+  box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
+/* 언제 무엇을 해야 하나                                                   */
+/* ------------------------------------------------------------------ */
+
+async function loadTimeline() {
+  const box = $("#timeline");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+  try {
+    const body = state.sessionId
+      ? { session_id: state.sessionId, profile }
+      : { profile };
+    renderTimeline(await api("/api/timeline", { method: "POST", body: JSON.stringify(body) }));
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderTimeline(report) {
+  const box = $("#timeline");
+  box.innerHTML = "";
+  const clean = (t) => (t || "").replace(/\*\*/g, "");
+
+  box.appendChild(
+    el("div", `alert ${report.imminent.length ? "alert-warn" : "alert-ok"}`, clean(report.headline)),
+  );
+
+  report.events
+    .filter((e) => !e.passed)
+    .forEach((e) => {
+      const icon = e.kind === "deadline" ? "⏰" : e.kind === "decision" ? "🔀" : "·";
+      const card = el("div", "card");
+      card.appendChild(
+        el("div", "stat-label", `${icon} ${e.when} (만 ${e.age}세) — ${e.title}`),
+      );
+      if (e.detail) card.appendChild(el("div", "stat-note", clean(e.detail)));
+      // 계산은 다 해줬는데 신청 방법이 없으면 시니어에게는 아무것도 안 해준 것과 같다.
+      if (e.where) card.appendChild(el("div", "trace-args", `어디서 — ${e.where}`));
+      if (e.what) card.appendChild(el("div", "trace-args", `준비물 — ${e.what}`));
+      box.appendChild(card);
+    });
+
   const notes = el("ul", "hint");
   report.notes.forEach((n) => notes.appendChild(el("li", null, clean(n))));
   box.appendChild(notes);

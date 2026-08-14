@@ -40,6 +40,7 @@ from core.risk_score import compute_risk_score
 from core.health_insurance import analyze_health_insurance
 from core.national_pension import analyze_national_pension
 from core.medical_cost import analyze_medical_cost
+from core.timeline import build_timeline
 from core.working_income import analyze_working_income
 from core.severance import compare_severance_options
 from core.sensitivity import analyze_sensitivity
@@ -174,6 +175,10 @@ class MedicalCostArgs(_Args):
         le=MAX_WON,
         description="본인부담상한액(연, 원). 모르면 생략한다 — 추측해서 넣지 말 것",
     )
+
+
+class TimelineArgs(_Args):
+    pass
 
 
 class MessageArgs(_Args):
@@ -501,6 +506,29 @@ def _run_medical_cost(
     }
 
 
+def _run_timeline(
+    profile: UserProfile, assumptions: Assumptions, args: TimelineArgs
+) -> dict[str, Any]:
+    result = build_timeline(profile, assumptions=assumptions)
+    return {
+        "일정": [
+            {
+                "시점": e.when,
+                "나이": f"만 {e.age}세",
+                "할_일": e.title,
+                "기한인가": e.kind == "deadline",
+                "어디서": e.where,
+                "준비물": e.what,
+                "지났나": e.passed,
+            }
+            for e in result.events
+        ],
+        "임박한_기한": [e.title for e in result.imminent],
+        "한_문장": result.headline,
+        "주의": result.notes,
+    }
+
+
 def _run_message(
     profile: UserProfile, assumptions: Assumptions, args: MessageArgs
 ) -> dict[str, Any]:
@@ -574,6 +602,13 @@ def _sum_medical_cost(args: MedicalCostArgs, out: dict[str, Any]) -> str:
     return (
         f"의료비 충격 검토 → 상한액 {out['상한액']} · "
         f"{len(out['의료비별_영향'])}개 규모 비교"
+    )
+
+
+def _sum_timeline(args: TimelineArgs, out: dict[str, Any]) -> str:
+    return (
+        f"은퇴 일정 확인 → {len(out['일정'])}개 · "
+        f"임박한 기한 {len(out['임박한_기한'])}건"
     )
 
 
@@ -729,6 +764,18 @@ TOOLS: tuple[Tool, ...] = (
         args_model=MedicalCostArgs,
         handler=_run_medical_cost,
         summarize=_sum_medical_cost,
+    ),
+    Tool(
+        name="retirement_timeline",
+        description=(
+            "언제 무엇을 해야 하는지 순서대로 알려준다. 퇴직금 수령 방식 결정, "
+            "건강보험 임의계속가입 신청 기한, 국민연금 개시, 피부양자 탈락 시점을 "
+            "실제 연월로 뽑고 **어디서 어떻게 신청하는지**까지 준다. "
+            "'언제까지 해야 하나요', '뭐부터 해야 하죠', '어디서 신청하나요' 같은 질문에 쓴다."
+        ),
+        args_model=TimelineArgs,
+        handler=_run_timeline,
+        summarize=_sum_timeline,
     ),
     Tool(
         name="check_message",

@@ -102,6 +102,7 @@ def test_all_sections_are_present(form_app):
     headings = " ".join(h.value for h in form_app.subheader)
     for section in [
         "한눈에 보기",
+        "언제 무엇을 해야 하나",
         "나의 자산지도",
         "시간에 따른 자산 변화",
         "자산이 남아있을 확률",

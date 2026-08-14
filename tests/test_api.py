@@ -668,3 +668,12 @@ def test_medical_cost_applies_a_supplied_ceiling(client):
     biggest = body["scenarios"][-1]
     assert biggest["ceiling_applied"] is True
     assert biggest["refund"] > 0
+
+
+def test_timeline_gives_real_months(client):
+    body = client.post("/api/timeline", json={"sample": "demo"}).json()
+
+    deadline = next(e for e in body["events"] if "임의계속가입 신청" in e["title"])
+    assert (deadline["year"], deadline["month"]) == (2027, 3)
+    assert deadline["where"]  # 어디서 신청하는지까지
+    assert body["headline"]
