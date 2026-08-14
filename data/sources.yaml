@@ -179,8 +179,42 @@ values:
       expect: {min: 1, max: 30}
     note: 제92조.
 
+  # --- 주택 취득세 (다운사이징) -------------------------------------------
+  # 지방세법 제11조 제1항 제8호. 세율이 '1천분의 10' 형태로 적혀 있어
+  # scale 0.001 로 비율로 옮긴다.
+  - key: housing.acquisition_tax.low_rate
+    label: 주택 취득세율 (6억원 이하)
+    changes: statute
+    checked_at: "2026-08-14"
+    source:
+      target: law
+      name: 지방세법
+    extract:
+      pattern: '6억원 이하[^.]{0,40}?1천분의\s*(\d+)'
+      scale: 0.001
+      expect: {min: 0.001, max: 0.05}
+    note: 제11조 제1항 제8호 가목. ✅ 원문 확인 (2026-08-14).
+
+  - key: housing.acquisition_tax.high_rate
+    label: 주택 취득세율 (9억원 초과)
+    changes: statute
+    checked_at: "2026-08-14"
+    source:
+      target: law
+      name: 지방세법
+    extract:
+      pattern: '9억원을 초과[^.]{0,40}?1천분의\s*(\d+)'
+      scale: 0.001
+      expect: {min: 0.001, max: 0.15}
+    note: 제11조 제1항 제8호 다목. ✅ 원문 확인 (2026-08-14).
+
 # 원문을 기계로 읽기 어려운 것들. 링크만 남기고 사람이 확인한다.
 manual:
+  - key: housing.brokerage
+    label: 중개보수 상한요율 구간표
+    why: 공인중개사법 시행규칙 별표 1. 표 형태라 조문 파싱으로 안 잡힌다. 지자체 조례로도 달라진다
+    url: https://www.law.go.kr/법령/공인중개사법시행규칙
+
   - key: health_insurance.dependent
     label: 피부양자 소득·재산 요건
     why: 국민건강보험법 시행규칙 별표 1의2. 표 형태라 조문 파싱으로 안 잡힌다

@@ -39,6 +39,7 @@ from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
 from core.health_insurance import analyze_health_insurance
 from core.national_pension import analyze_national_pension
+from core.downsizing import analyze_downsizing
 from core.medical_cost import analyze_medical_cost
 from core.timeline import build_timeline
 from core.working_income import analyze_working_income
@@ -174,6 +175,18 @@ class MedicalCostArgs(_Args):
         ge=0,
         le=MAX_WON,
         description="본인부담상한액(연, 원). 모르면 생략한다 — 추측해서 넣지 말 것",
+    )
+
+
+class DownsizingArgs(_Args):
+    new_home_price: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=MAX_WON,
+        description=(
+            "옮겨 갈 집의 가격(원). 사용자가 정해 두었으면 넣고, 아니면 생략한다 — "
+            "생략하면 여러 축소 폭을 한 번에 비교한다. **시세를 추측해서 넣지 말 것**"
+        ),
     )
 
 
@@ -506,6 +519,54 @@ def _run_medical_cost(
     }
 
 
+def _run_downsizing(
+    profile: UserProfile, assumptions: Assumptions, args: DownsizingArgs
+) -> dict[str, Any]:
+    result = analyze_downsizing(
+        profile, new_home_price=args.new_home_price, assumptions=assumptions
+    )
+    if not result.computable:
+        return {
+            "계산_가능": False,
+            "이유": result.reason,
+            "한_문장": result.headline,
+            "결론": result.verdict,
+            "주의": result.notes,
+        }
+    return {
+        "계산_가능": True,
+        "지금_집": result.current_home_label,
+        "총자산_중_비중": result.home_share_label,
+        "지금_고갈": (
+            "고갈되지 않음"
+            if result.baseline_depletion_age is None
+            else f"만 {result.baseline_depletion_age}세"
+        ),
+        "선택지": [
+            {
+                "옮길_집": o.new_home_label,
+                "집값_차액": o.gross_difference_label,
+                "거래비용": o.costs.total_label,
+                "비용_내역": {
+                    "취득세": f"{o.costs.acquisition_tax_label} ({o.costs.acquisition_tax_rate_label})",
+                    "중개보수_매도": o.costs.brokerage_sell_label,
+                    "중개보수_매수": o.costs.brokerage_buy_label,
+                    "등기·법무": o.costs.registration_label,
+                    "이사비": o.costs.moving_label,
+                },
+                "손에_남는_돈": o.net_proceeds_label,
+                "고갈": o.depletion_label,
+                "밀리는_햇수": o.years_gained,
+                "건강보험_영향": o.health_effect,
+            }
+            for o in result.options
+        ],
+        "한_문장": result.headline,
+        "결론": result.verdict,
+        "주의": result.notes,
+    }
+
+
 def _run_timeline(
     profile: UserProfile, assumptions: Assumptions, args: TimelineArgs
 ) -> dict[str, Any]:
@@ -602,6 +663,15 @@ def _sum_medical_cost(args: MedicalCostArgs, out: dict[str, Any]) -> str:
     return (
         f"의료비 충격 검토 → 상한액 {out['상한액']} · "
         f"{len(out['의료비별_영향'])}개 규모 비교"
+    )
+
+
+def _sum_downsizing(args: DownsizingArgs, out: dict[str, Any]) -> str:
+    if not out.get("계산_가능"):
+        return "주택 다운사이징 검토 → 부동산 평가액 미확인"
+    return (
+        f"주택 다운사이징 검토 → 지금 집 {out['지금_집']} · "
+        f"선택지 {len(out['선택지'])}개 비교"
     )
 
 
@@ -764,6 +834,19 @@ TOOLS: tuple[Tool, ...] = (
         args_model=MedicalCostArgs,
         handler=_run_medical_cost,
         summarize=_sum_medical_cost,
+    ),
+    Tool(
+        name="housing_downsizing",
+        description=(
+            "집을 줄였을 때 **실제로 손에 남는 돈**과 계획 변화를 계산한다. 차액이 그대로 "
+            "들어오지 않는다 — 새 집 취득세(지방세법 제11조), 매도·매수 중개보수, 등기비, "
+            "이사비가 먼저 나간다. 재산이 줄면 건강보험 피부양자 재산요건도 함께 완화된다. "
+            "'집 줄일까요', '집 팔면 어떻게 되나요', '작은 데로 이사하면' 같은 질문에 쓴다. "
+            "양도소득세는 반영하지 않는다."
+        ),
+        args_model=DownsizingArgs,
+        handler=_run_downsizing,
+        summarize=_sum_downsizing,
     ),
     Tool(
         name="retirement_timeline",

@@ -43,6 +43,7 @@ from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
+from core.downsizing import DownsizingReport, analyze_downsizing
 from core.medical_cost import MedicalCostReport, analyze_medical_cost
 from core.timeline import TimelineReport, build_timeline, changes_since
 from core.working_income import WorkingIncomeReport, analyze_working_income
@@ -245,6 +246,21 @@ class NationalPensionRequest(BaseModel):
     )
     monthly_income_base: Optional[int] = Field(
         default=None, ge=0, description="기준소득월액(원). 생략하면 퇴직 전 월 급여"
+    )
+    profile: Optional[UserProfile] = None
+    session_id: Optional[str] = None
+    sample: Optional[str] = None
+
+
+class DownsizingRequest(BaseModel):
+    """주택 다운사이징 요청.
+
+    옮겨 갈 집의 가격은 사용자가 정한다. **시세를 추정하지 않는다** — 지역과 단지에
+    따라 다르고, 틀리면 그 아래 계산이 전부 틀어진다.
+    """
+
+    new_home_price: Optional[int] = Field(
+        default=None, ge=0, description="옮겨 갈 집의 가격. 생략하면 축소 폭 사다리를 보여준다"
     )
     profile: Optional[UserProfile] = None
     session_id: Optional[str] = None
@@ -634,6 +650,17 @@ def medical_cost(request: MedicalCostRequest) -> MedicalCostReport:
     """의료비가 계획을 얼마나 흔드나. 본인부담상한제를 함께 본다."""
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return analyze_medical_cost(profile, annual_ceiling=request.annual_ceiling)
+
+
+@app.post("/api/downsizing", response_model=DownsizingReport)
+def downsizing(request: DownsizingRequest) -> DownsizingReport:
+    """집을 줄이면 실제로 얼마가 남는가.
+
+    처방 엔진이 쥔 레버(생활비·연금 개시·기타 소득)에 부동산이 빠져 있었다.
+    데모 인물 기준으로 총자산의 69%다.
+    """
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return analyze_downsizing(profile, new_home_price=request.new_home_price)
 
 
 @app.post("/api/timeline", response_model=TimelineReport)

@@ -47,6 +47,7 @@ from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
+from core.downsizing import DownsizingReport, analyze_downsizing
 from core.medical_cost import MedicalCostReport, analyze_medical_cost
 from core.timeline import TimelineReport, build_timeline
 from core.working_income import WorkingIncomeReport, analyze_working_income
@@ -1188,6 +1189,90 @@ def render_timeline(profile: UserProfile) -> None:
         st.caption(note.replace("**", ""))
 
 
+def render_downsizing(profile: UserProfile) -> None:
+    """집을 줄이면 실제로 얼마가 남는가.
+
+    처방 화면 뒤에 둔다. 처방이 쥔 레버는 생활비·연금 개시·기타 소득뿐인데,
+    이 연령대에게 가장 큰 자산은 대개 집이다. 그 레버를 여기서 보탠다.
+    """
+    st.subheader("집을 줄이면 얼마가 남을까")
+    st.caption(
+        "차액이 그대로 들어오지 않습니다. 새 집 취득세와 매도·매수 중개보수, "
+        "등기비, 이사비가 먼저 나갑니다. 재산이 줄면 건강보험 피부양자 재산요건도 "
+        "함께 완화됩니다."
+    )
+
+    price = st.number_input(
+        "옮겨 갈 집(만원)",
+        0,
+        300_000,
+        0,
+        step=1_000,
+        help="0이면 여러 축소 폭을 한 번에 비교해 드립니다",
+    )
+    report: DownsizingReport = analyze_downsizing(
+        profile, new_home_price=price * MAN if price else None
+    )
+
+    if not report.computable:
+        st.warning(report.headline.replace("**", ""))
+        st.info(f"**이렇게 하세요** — {report.verdict.replace('**', '')}")
+        for note in report.notes:
+            st.caption(note.replace("**", ""))
+        return
+
+    st.info(report.headline.replace("**", ""))
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "옮길 집": o.new_home_label,
+                    "집값 차액": o.gross_difference_label,
+                    "거래비용": o.costs.total_label,
+                    "손에 남는 돈": o.net_proceeds_label,
+                    "자산 고갈": o.depletion_label,
+                    "밀림": f"{o.years_gained}년" if o.years_gained else "—",
+                }
+                for o in report.options
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    # 합계만 보여주면 믿지 않는다. 첫 선택지의 내역을 펼쳐 둔다.
+    first = report.options[0] if report.options else None
+    if first:
+        cost = first.costs
+        with st.expander(f"{first.new_home_label}로 옮기실 때 거래비용 내역"):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {"항목": f"취득세 ({cost.acquisition_tax_rate_label})",
+                         "금액": cost.acquisition_tax_label},
+                        {"항목": "중개보수 — 파실 때", "금액": cost.brokerage_sell_label},
+                        {"항목": "중개보수 — 사실 때", "금액": cost.brokerage_buy_label},
+                        {"항목": "등기·법무", "금액": cost.registration_label},
+                        {"항목": "이사비", "금액": cost.moving_label},
+                        {"항목": "합계", "금액": cost.total_label},
+                    ]
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+    relieved = next((o for o in report.options if o.relieves_property_test), None)
+    if relieved:
+        st.success(relieved.health_effect.replace("**", ""))
+    elif first:
+        st.caption(first.health_effect.replace("**", ""))
+
+    st.info(f"**이렇게 하세요** — {report.verdict.replace('**', '')}")
+    for note in report.notes:
+        st.caption(note.replace("**", ""))
+
+
 def render_medical_cost(profile: UserProfile) -> None:
     """의료비 충격과 본인부담상한제.
 
@@ -1365,6 +1450,8 @@ def main() -> None:
     render_prescriptions(profile)
     st.divider()
     render_working_income(profile)
+    st.divider()
+    render_downsizing(profile)
     st.divider()
     render_medical_cost(profile)
     st.divider()

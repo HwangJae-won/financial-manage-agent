@@ -314,6 +314,7 @@ def demo_handler(today_year: int):
 # 장면은 에이전트가 질문을 못 알아듣는 것처럼 보인다.
 TOOL_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("retirement_timeline", ("언제까지", "언제 해", "뭐부터", "순서", "일정", "어디서 신청", "신청 방법", "기한")),
+    ("housing_downsizing", ("집을 줄", "집 줄", "집 팔", "집을 팔", "이사", "다운사이징", "평수", "작은 집", "주택 처분")),
     ("medical_cost", ("의료비", "병원비", "암", "아프", "치료비", "간병", "입원", "수술")),
     ("working_income", ("일하면", "재취업", "일자리", "벌면", "취업", "알바", "소득이 생기")),
     ("national_pension_options", ("국민연금", "추납", "임의계속", "가입기간")),

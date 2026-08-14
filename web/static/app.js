@@ -405,6 +405,7 @@ function renderAnalysis(data) {
   loadFamilyReport();
   loadPrescriptions();
   loadWorkingIncome();
+  loadDownsizing();
   loadMedicalCost();
   loadSensitivity();
 }
@@ -1157,6 +1158,87 @@ function renderTimeline(report) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 집을 줄이면 얼마가 남을까                                              */
+/* ------------------------------------------------------------------ */
+
+async function loadDownsizing() {
+  const box = $("#downsizing");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+  const raw = $("#ds-price").value.trim();
+  try {
+    renderDownsizing(
+      await api("/api/downsizing", {
+        method: "POST",
+        body: JSON.stringify({
+          profile,
+          new_home_price: raw === "" ? null : Number(raw) * MAN,
+        }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderDownsizing(report) {
+  const box = $("#downsizing");
+  box.innerHTML = "";
+  const clean = (t) => (t || "").replace(/\*\*/g, "");
+
+  box.appendChild(
+    el("div", `alert ${report.computable ? "alert-ok" : "alert-warn"}`, clean(report.headline)),
+  );
+
+  if (report.computable) {
+    const table = el("table");
+    const thead = el("thead");
+    const header = el("tr");
+    ["옮길 집", "집값 차액", "거래비용", "손에 남는 돈", "자산 고갈", "밀림"].forEach((t) =>
+      header.appendChild(el("th", null, t)),
+    );
+    thead.appendChild(header);
+    table.appendChild(thead);
+    const tbody = el("tbody");
+    report.options.forEach((o) => {
+      const row = el("tr");
+      [
+        o.new_home_label,
+        o.gross_difference_label,
+        o.costs.total_label,
+        o.net_proceeds_label,
+        o.depletion_label,
+        o.years_gained ? `${o.years_gained}년` : "—",
+      ].forEach((v) => row.appendChild(el("td", null, v)));
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    box.appendChild(table);
+
+    // 합계만 보여주면 믿지 않는다. 첫 선택지의 내역을 펼쳐 둔다.
+    const first = report.options[0];
+    if (first) {
+      const c = first.costs;
+      const detail = el("ul", "hint");
+      [
+        `취득세 ${c.acquisition_tax_label} (${c.acquisition_tax_rate_label})`,
+        `중개보수 — 파실 때 ${c.brokerage_sell_label}, 사실 때 ${c.brokerage_buy_label}`,
+        `등기·법무 ${c.registration_label} · 이사비 ${c.moving_label}`,
+      ].forEach((t) => detail.appendChild(el("li", null, `${first.new_home_label}로 옮기실 때 — ${t}`)));
+      box.appendChild(detail);
+    }
+
+    const health = report.options.find((o) => o.relieves_property_test) || report.options[0];
+    if (health) box.appendChild(el("p", "section-note", clean(health.health_effect)));
+  }
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${clean(report.verdict)}`));
+  const notes = el("ul", "hint");
+  report.notes.forEach((n) => notes.appendChild(el("li", null, clean(n))));
+  box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
 /* 병원비 — 본인부담상한제                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1705,6 +1787,7 @@ async function init() {
   $("#hi-family").addEventListener("change", loadHealthInsurance);
   $("#np-apply").addEventListener("click", loadNationalPension);
   $("#mc-apply").addEventListener("click", loadMedicalCost);
+  $("#ds-apply").addEventListener("click", loadDownsizing);
   loadPolicyList();
 
   $$("[data-sample]").forEach((btn) =>

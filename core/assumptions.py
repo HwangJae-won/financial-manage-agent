@@ -173,6 +173,54 @@ class NationalPensionAssumption(BaseModel):
         return max(self.income_base_min, min(self.income_base_max, amount))
 
 
+class BrokerageBand(BaseModel):
+    over: int
+    rate: float
+
+
+class AcquisitionTaxAssumption(BaseModel):
+    low_limit: int = 600_000_000
+    low_rate: float = 0.010
+    high_limit: int = 900_000_000
+    high_rate: float = 0.030
+
+    def rate_for(self, price: int) -> float:
+        """주택 유상거래 취득세율 (지방세법 제11조 제1항 제8호).
+
+        6~9억 구간은 고정 세율이 아니라 계산식이다. 이 구간을 1%나 3%로 뭉개면
+        6억과 9억 사이 어디서든 수백만원이 틀린다.
+        """
+        if price <= self.low_limit:
+            return self.low_rate
+        if price > self.high_limit:
+            return self.high_rate
+        # (취득가액 ÷ 3억 × 2 - 3) × 1/100, 소수점 넷째자리까지
+        span = self.high_limit - self.low_limit
+        return round((price / span * 2 - 3) / 100, 4)
+
+
+class HousingAssumption(BaseModel):
+    """집을 줄일 때의 거래 비용. 집값 자체는 사용자가 넣는다."""
+
+    acquisition_tax: AcquisitionTaxAssumption = Field(
+        default_factory=AcquisitionTaxAssumption
+    )
+    brokerage: list[BrokerageBand] = Field(default_factory=list)
+    registration_rate: float = Field(default=0.002, ge=0.0)
+    moving_cost: int = Field(default=3_000_000, ge=0)
+
+    def brokerage_fee(self, price: int) -> int:
+        """중개보수. 구간별 **상한요율**이라 실제는 이보다 낮을 수 있다."""
+        if price <= 0 or not self.brokerage:
+            return 0
+        band = max(
+            (b for b in self.brokerage if price > b.over),
+            key=lambda b: b.over,
+            default=self.brokerage[0],
+        )
+        return int(round(price * band.rate))
+
+
 class AssetMapAssumption(BaseModel):
     survival_months: int
 
@@ -229,6 +277,7 @@ class Assumptions(BaseModel):
     national_pension: NationalPensionAssumption = Field(
         default_factory=NationalPensionAssumption
     )
+    housing: HousingAssumption = Field(default_factory=HousingAssumption)
     asset_map: AssetMapAssumption
     retirement_income_tax: RetirementIncomeTaxAssumption
     sensitivity: SensitivityAssumption = Field(default_factory=SensitivityAssumption)
