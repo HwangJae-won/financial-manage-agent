@@ -1,0 +1,209 @@
+# 가정값의 출처와 유효기간
+#
+# `assumptions.yaml` 은 계산에 쓰는 값만 담는다. 그 값이 **어디서 왔고 언제까지
+# 유효한지**는 여기 둔다. 두 파일을 나눈 이유는 assumptions.yaml 을 읽는 쪽
+# (core/assumptions.py)의 스키마를 건드리지 않기 위해서다.
+#
+# ⚠️ 이 파일은 값을 바꾸지 않는다. `scripts/check_assumptions.py` 가 이것을 보고
+#    "지금 낡은 값이 무엇이고 원문에는 뭐라고 되어 있는지"를 보고할 뿐이다.
+#    **반영은 사람이 한다.** 스크래핑한 숫자를 조용히 반영하면, 근사식을 지어내지
+#    않기로 한 이 프로젝트의 원칙과 앞뒤가 맞지 않는다.
+#
+# changes: yearly  — 매년 바뀐다. 확인 시점이 정해져 있다
+#          statute — 법이 개정될 때만 바뀐다. 부정기
+
+version: "2026-08-14"
+
+# 확인 일정. 이 달이 되면 해당 값들을 다시 본다.
+calendar:
+  - month: 1
+    what: 건강보험료율 · 장기요양보험료율 (전년 말 건강보험정책심의위 결정)
+  - month: 7
+    what: 국민연금 기준소득월액 상·하한 (매년 7월 적용)
+
+values:
+  # --- 매년 바뀌는 것 ---------------------------------------------------- #
+
+  - key: national_pension.income_base_max
+    label: 국민연금 기준소득월액 상한액
+    changes: yearly
+    checked_at: "2024-07-01"
+    effective_until: "2025-06-30"
+    source:
+      target: admrul
+      query: 국민연금 기준소득월액 하한액과 상한액
+    extract:
+      pattern: '상한액\s*[:：]\s*([\d,]+)\s*천원'
+      expect: {min: 3000000, max: 20000000}
+      scale: 1000
+    period_pattern: '적용기간\s*[:：]\s*([^0-9]*[\d]{4}년도[^,]*?까지)'
+
+  - key: national_pension.income_base_min
+    label: 국민연금 기준소득월액 하한액
+    changes: yearly
+    checked_at: "2024-07-01"
+    effective_until: "2025-06-30"
+    source:
+      target: admrul
+      query: 국민연금 기준소득월액 하한액과 상한액
+    extract:
+      pattern: '하한액\s*[:：]\s*([\d,]+)\s*천원'
+      expect: {min: 200000, max: 2000000}
+      scale: 1000
+    period_pattern: '적용기간\s*[:：]\s*([^0-9]*[\d]{4}년도[^,]*?까지)'
+
+  - key: health_insurance.local.health_rate
+    label: 건강보험료율
+    changes: yearly
+    checked_at: "2025-01-01"
+    effective_until: "2025-12-31"
+    source:
+      target: law
+      name: 국민건강보험법 시행령
+    extract:
+      pattern: '보험료율은\s*(?:1만분의\s*)?([\d,.]+)'
+      expect: {min: 0.03, max: 0.15}
+    note: >-
+      시행령 제44조. "1만분의 709" 형태로 적혀 있을 수 있어 단위 확인이 필요하다.
+      공단 공지(nhis.or.kr)가 더 읽기 쉽다.
+
+  - key: health_insurance.local.long_term_care_rate
+    label: 장기요양보험료율 (건강보험료 대비)
+    changes: yearly
+    checked_at: "2025-01-01"
+    effective_until: "2025-12-31"
+    source:
+      target: law
+      name: 노인장기요양보험법 시행령
+    extract:
+      pattern: '장기요양보험료율은\s*(?:1만분의\s*)?([\d,.]+)'
+      expect: {min: 0.05, max: 0.30}
+    note: 시행령 제4조.
+
+  - key: health_insurance.local.minimum_monthly
+    label: 지역가입자 최저보험료
+    changes: yearly
+    checked_at: "2025-01-01"
+    effective_until: "2025-12-31"
+    source:
+      target: law
+      name: 국민건강보험법 시행령
+    extract:
+      pattern: '최저보험료[^\d]{0,40}([\d,]+)\s*원'
+      expect: {min: 5000, max: 100000}
+
+  # --- 법이 바뀔 때만 ----------------------------------------------------- #
+
+  - key: national_pension.contribution_rate
+    label: 국민연금 보험료율
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 국민연금법
+    extract:
+      pattern: '연금보험료율[^\d]{0,60}(\d+(?:\.\d+)?)\s*(?:퍼센트|%)'
+      expect: {min: 3, max: 20}
+    note: 제88조. 2026년 현재 9%. 연금개혁 논의에 따라 바뀔 수 있는 값이다.
+
+  - key: national_pension.min_months
+    label: 노령연금 최소 가입기간(월)
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 국민연금법
+    extract:
+      pattern: '가입기간이\s*(\d+)\s*년\s*이상인\s*가입자'
+      expect: {min: 60, max: 300}
+      scale: 12
+    note: 제61조. 119개월과 120개월이 '연금 0원'과 '평생 연금'을 가르는 값이다.
+
+  - key: national_pension.max_catchup_months
+    label: 추후납부 상한 개월수
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 국민연금법
+    extract:
+      pattern: '추후\s*납부(?:할|하는)?[^.]{0,200}?(\d+)\s*개월'
+      expect: {min: 12, max: 600}
+    note: 제92조. 2020년 12월 개정으로 119개월 상한이 생겼다.
+
+  - key: national_pension.voluntary_max_age
+    label: 임의계속가입 상한 연령
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 국민연금법
+    extract:
+      pattern: '임의계속가입[^.]{0,200}?(\d+)\s*세'
+      expect: {min: 60, max: 75}
+    note: 제13조.
+
+  - key: pension.deferral_rate_per_year
+    label: 연기연금 가산율 (연)
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 국민연금법
+    extract:
+      pattern: '연기(?:된|한)[^.]{0,150}?(\d+(?:\.\d+)?)\s*퍼센트'
+      expect: {min: 0.1, max: 40}
+    note: 제62조. 월 0.6% = 연 7.2%. 조문은 월 단위로 적혀 있을 수 있다.
+
+  - key: pension.early_rate_per_year
+    label: 조기노령연금 감액률 (연)
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 국민연금법
+    extract:
+      pattern: '조기노령연금[^.]{0,300}?(\d+(?:\.\d+)?)\s*퍼센트'
+      expect: {min: 0.1, max: 40}
+    note: 제61조.
+
+  - key: retirement_income_tax.local_tax_rate
+    label: 지방소득세율 (소득세액 대비)
+    changes: statute
+    checked_at: "2026-08-13"
+    source:
+      target: law
+      name: 지방세법
+    extract:
+      pattern: '소득세액의\s*(?:100분의\s*)?(\d+(?:\.\d+)?)'
+      expect: {min: 1, max: 30}
+    note: 제92조.
+
+# 원문을 기계로 읽기 어려운 것들. 링크만 남기고 사람이 확인한다.
+manual:
+  - key: health_insurance.dependent
+    label: 피부양자 소득·재산 요건
+    why: 국민건강보험법 시행규칙 별표 1의2. 표 형태라 조문 파싱으로 안 잡힌다
+    url: https://www.law.go.kr/법령/국민건강보험법시행규칙
+
+  - key: retirement_income_tax.service_deduction
+    label: 근속연수공제 구간표
+    why: 소득세법 제48조의 표. 구간이 바뀌면 실효세율이 통째로 달라진다
+    url: https://www.law.go.kr/법령/소득세법
+
+  - key: retirement_income_tax.brackets
+    label: 종합소득 기본세율표
+    why: 소득세법 제55조의 표
+    url: https://www.law.go.kr/법령/소득세법
+
+  - key: policy_facts.isa_reform
+    label: ISA 세제 개편안 파라미터
+    why: >-
+      기재부 세법개정안. 확정 전이라 법령에 없다. "연 9만 9,000원이 상한"이라는
+      이 서비스의 핵심 문장이 여기 걸려 있다
+    url: https://www.moef.go.kr
+
+  - key: health_insurance.local.property_score
+    label: 지역가입자 재산분 점수표
+    why: 확보하면 건보료가 하한이 아니라 실제 금액이 된다. 없으면 근사식을 지어내지 않는다
+    url: https://www.nhis.or.kr

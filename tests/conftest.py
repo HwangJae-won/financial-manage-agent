@@ -1,10 +1,44 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
 from core.assumptions import Assumptions, load_assumptions
+
+
+@pytest.fixture(autouse=True, scope="session")
+def isolated_env():
+    """테스트는 개발자의 `.env` 를 읽지 않는다.
+
+    이걸 막지 않으면 각자의 로컬 설정이 테스트 결과를 바꾼다. 실제로 로컬 모델을
+    붙여 보려고 `.env` 에 `FINAGENT_LLM_PROVIDER=local` 을 넣자 세 개가 깨졌다 —
+    "LOCAL_MODEL 이 없을 때" 를 검증하는 테스트가 개발자의 .env 에서 값을 주워
+    왔고, Streamlit 스모크 테스트는 mock 대신 실제 모델로 대화를 시작했다.
+
+    `load_env` 의 기본 인자가 정의 시점에 묶여 있어 `config.ENV_PATH` 를 바꿔서는
+    막히지 않는다. 그렇다고 함수를 통째로 무력화하면 `load_env` 자체를 검증하는
+    테스트가 깨진다 — **기본 경로만** 없는 파일로 돌린다.
+    """
+    import agents.config as config
+
+    original = config.load_env.__defaults__
+    config.load_env.__defaults__ = (Path("/nonexistent/finagent/.env"),)
+    for key in (
+        "FINAGENT_LLM_PROVIDER",
+        "LOCAL_MODEL",
+        "LOCAL_BASE_URL",
+        "LOCAL_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+    ):
+        os.environ.pop(key, None)
+    config.describe.cache_clear()
+    yield
+    config.load_env.__defaults__ = original
 
 
 @pytest.fixture(autouse=True, scope="session")
