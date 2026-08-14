@@ -34,7 +34,7 @@
 
 ## 기능
 
-기획서 9개 기능 중 ⑨ 능동알림을 뺀 전부와, 축을 세우면서 추가한 것들.
+기획서 9개 기능 **전부**와, 축을 세우면서 추가한 것들.
 
 ### 진단 — 지금 어떤 상태인가
 
@@ -66,6 +66,8 @@
 | 정책 영향 분석 ④ | 제도 변화가 **내 자산 기준으로 얼마인가** | `core/policy.py` |
 | 신뢰 표시 ⑧ | 발표 / 입법예고 / 국회통과 / 공포 / 시행을 구분한다 | `data/policy_facts.yaml` |
 | 가족 공유 리포트 | 가족과 함께 볼 한 장. **기한이 있는 것**과 **안 해도 되는 것**을 나눈다 | `core/family_report.py` |
+| 은퇴 타임라인 · 행동 경로 | 기한을 조건문이 아니라 **날짜로**. 어디서 어떻게 신청하는지까지 | `core/timeline.py` |
+| 능동 알림 ⑨ | 다시 오셨을 때 그동안 무엇이 다가왔는지 | `core/timeline.py` |
 
 ### 상담 — 결과를 두고 이어서 묻기
 
@@ -97,6 +99,7 @@
 
 전체 계획: `.claude/plans/generic-shimmying-rabin.md`
 진행 상황과 남은 일: [`PROGRESS.md`](PROGRESS.md) · 축과 전체 계획: [`docs/roadmap.md`](docs/roadmap.md)
+**화면에 나가는 모든 숫자의 출처: [`docs/sources.md`](docs/sources.md)**
 
 ## 구조
 
@@ -117,6 +120,9 @@ core/            결정론적 계산. LLM·UI 의존성 없음
   severance.py     퇴직금 일시금 vs 연금 — 퇴직소득세를 제도 구조 그대로 계산
   health_insurance.py  퇴직 후 건강보험료 피부양자 절벽 (연도별 자격 판정)
   national_pension.py  임의계속가입·추납 — 늘어난 연금에서 건보료를 빼고 남는 것
+  working_income.py    재취업 소득 — 연금 감액(제63조의2)·건보료를 빼고 남는 것
+  medical_cost.py      의료비 충격과 본인부담상한제
+  timeline.py          은퇴 타임라인 · 행동 경로 · 능동 알림
   formatting.py    억/만원 표기
   samples.py       데모 페르소나
 agents/          LLM 계층. core/ 의 결과를 사람의 말로 옮긴다
@@ -146,7 +152,7 @@ scripts/
   chat.py              터미널에서 상담사와 대화
   eval_local.py        모델 평가 — 도구 선택·차단률·응답시간 집계
   check_assumptions.py 가정값이 낡았는지 법령 원문으로 확인
-tests/           pytest (581개)
+tests/           pytest (645개)
 ```
 
 `schedule.py`가 분리되어 있는 이유: 퇴직월·연금개시월 안분과 물가연동처럼 틀리기
@@ -164,7 +170,7 @@ pip install "pydantic>=2.7" pyyaml numpy pytest streamlit plotly pandas \
             fastapi uvicorn langgraph
 
 # 테스트
-pytest                                    # 581개
+pytest                                    # 645개
 
 # 웹 (주 화면)
 uvicorn web.api:app --host 0.0.0.0 --port 8000
