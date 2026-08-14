@@ -43,6 +43,7 @@ from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
+from core.working_income import WorkingIncomeReport, analyze_working_income
 from core.policy import (
     DEFAULT_POLICY_KEY,
     PolicyFact,
@@ -599,6 +600,16 @@ def family_report(request: SensitivityRequest) -> FamilyReport:
     """
     profile = _resolve_profile(request.profile, request.session_id, request.sample)
     return build_family_report(profile)
+
+
+@app.post("/api/working-income", response_model=WorkingIncomeReport)
+def working_income(request: SensitivityRequest) -> WorkingIncomeReport:
+    """퇴직하고 일하면 손에 얼마가 남는가.
+
+    연금 감액 · 건강보험료를 함께 계산한다. 요청 형태는 민감도와 같아 재사용한다.
+    """
+    profile = _resolve_profile(request.profile, request.session_id, request.sample)
+    return analyze_working_income(profile)
 
 
 @app.post("/api/sensitivity", response_model=SensitivityReport)

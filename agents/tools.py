@@ -39,6 +39,7 @@ from core.prescribe import prescribe
 from core.risk_score import compute_risk_score
 from core.health_insurance import analyze_health_insurance
 from core.national_pension import analyze_national_pension
+from core.working_income import analyze_working_income
 from core.severance import compare_severance_options
 from core.sensitivity import analyze_sensitivity
 
@@ -153,6 +154,15 @@ class NationalPensionArgs(_Args):
         ge=0,
         le=MAX_WON,
         description="기준소득월액(원). 생략하면 퇴직 전 월 급여를 쓴다",
+    )
+
+
+class WorkingIncomeArgs(_Args):
+    monthly_income: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=MAX_WON,
+        description="벌어볼 월 소득(원). 생략하면 여러 구간을 한 번에 비교한다",
     )
 
 
@@ -425,6 +435,36 @@ def _run_national_pension(
     }
 
 
+def _run_working_income(
+    profile: UserProfile, assumptions: Assumptions, args: WorkingIncomeArgs
+) -> dict[str, Any]:
+    levels = (args.monthly_income,) if args.monthly_income else None
+    result = analyze_working_income(profile, levels=levels, assumptions=assumptions)
+    return {
+        "연금이_안_깎이는_상한": result.free_ceiling_label,
+        "감액_적용": result.reduction_applies,
+        "감액_구간": result.reduction_window,
+        "소득별_결과": [
+            {
+                "월_소득": o.monthly_income_label,
+                "연금_감액": o.pension_cut_label,
+                "건강보험료": o.health_premium_label,
+                "손에_남는_것": o.net_label,
+                "고갈": o.depletion_label,
+            }
+            for o in result.outcomes
+        ],
+        "처방_대비_실제_필요액": (
+            f"{result.prescribed_income_label} → {result.actual_needed_income_label}"
+            if result.gap
+            else "차이 없음"
+        ),
+        "한_문장": result.headline,
+        "결론": result.verdict,
+        "주의": result.notes,
+    }
+
+
 def _run_message(
     profile: UserProfile, assumptions: Assumptions, args: MessageArgs
 ) -> dict[str, Any]:
@@ -484,6 +524,13 @@ def _sum_national_pension(args: NationalPensionArgs, out: dict[str, Any]) -> str
     return (
         f"국민연금 추가납부 검토 → 수급자격 {out['수급자격']} · "
         f"가장 나은 선택 {out['가장_나은_선택']}"
+    )
+
+
+def _sum_working_income(args: WorkingIncomeArgs, out: dict[str, Any]) -> str:
+    return (
+        f"재취업 소득 검토 → 월 {out['연금이_안_깎이는_상한']}까지 연금 감액 없음 · "
+        f"구간 {len(out['소득별_결과'])}개 비교"
     )
 
 
@@ -614,6 +661,18 @@ TOOLS: tuple[Tool, ...] = (
         args_model=NationalPensionArgs,
         handler=_run_national_pension,
         summarize=_sum_national_pension,
+    ),
+    Tool(
+        name="working_income",
+        description=(
+            "퇴직 후 일해서 소득이 생기면 손에 얼마가 남는지 계산한다. 60~65세에는 "
+            "소득이 많으면 노령연금이 깎이고(국민연금법 제63조의2), 건강보험 피부양자에서 "
+            "탈락해 보험료가 생긴다. 다만 **A값+200만원까지는 한 푼도 깎이지 않는다.** "
+            "'퇴직하고 일하면 연금 깎이나요', '월 200만원 벌면 얼마 남나요' 같은 질문에 쓴다."
+        ),
+        args_model=WorkingIncomeArgs,
+        handler=_run_working_income,
+        summarize=_sum_working_income,
     ),
     Tool(
         name="check_message",

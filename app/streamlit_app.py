@@ -47,6 +47,7 @@ from core.family_report import FamilyReport, build_family_report
 from core.health_insurance import HealthInsuranceReport, analyze_health_insurance
 from core.national_pension import NationalPensionReport, analyze_national_pension
 from core.severance import SeveranceComparison, compare_severance_options
+from core.working_income import WorkingIncomeReport, analyze_working_income
 from core.risk_score import RiskScore, compute_risk_score
 from core.samples import DEMO_PROFILE, DIVERSIFIED_PROFILE
 from core.scenarios import build_scenarios, comparison_table
@@ -1091,6 +1092,62 @@ def render_policy_impact(profile: UserProfile) -> None:
     st.caption(fact.trust_note)
 
 
+def render_working_income(profile: UserProfile) -> None:
+    """퇴직하고 일하면 손에 얼마가 남는가.
+
+    처방 화면 바로 뒤에 둔다. 거기서 "월 ○○만원의 수입을 더 만드시면" 이라고
+    말한 직후라, 그 금액이 실제로 얼마나 남는지를 이어서 보여줘야 한다.
+    """
+    st.subheader("퇴직하고 일하면 얼마나 남을까")
+    st.caption(
+        "60~65세에 소득이 많으면 노령연금이 깎이고, 건강보험 피부양자에서도 "
+        "탈락합니다. 다만 깎이기 시작하는 지점이 생각보다 높습니다."
+    )
+
+    report: WorkingIncomeReport = analyze_working_income(profile)
+
+    if report.reduction_applies:
+        st.success(report.headline.replace("**", ""))
+    else:
+        st.info(report.headline.replace("**", ""))
+
+    cols = st.columns(3)
+    cols[0].metric("연금이 안 깎이는 상한", report.free_ceiling_label)
+    cols[1].metric("기준(A값)", report.a_value_label)
+    cols[2].metric("감액 구간", report.reduction_window if report.reduction_applies else "해당 없음")
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "월 소득": o.monthly_income_label,
+                    "연금 감액": o.pension_cut_label,
+                    "건강보험료": o.health_premium_label,
+                    "손에 남는 것": o.net_label,
+                    "비율": o.keep_rate_label,
+                    "자산 고갈": o.depletion_label,
+                }
+                for o in report.outcomes
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    # 우리 자신의 권고를 같은 잣대로 다시 잰 결과. 숨기지 않는다.
+    if report.gap > 0:
+        st.warning(
+            f"위 '그래서 무엇을 하면 되나' 화면은 월 {report.prescribed_income_label}이면 "
+            f"된다고 말합니다. 그것은 건강보험료를 근사로 잡은 값이고, 제도대로 "
+            f"계산하면 **{report.actual_needed_income_label}**이 필요합니다 "
+            f"({report.gap_label} 차이)."
+        )
+
+    st.info(f"**이렇게 하세요** — {report.verdict.replace('**', '')}")
+    for note in report.notes:
+        st.caption(note.replace("**", ""))
+
+
 def render_family_report(profile: UserProfile) -> None:
     """가족에게 보여줄 한 장 (기능 5).
 
@@ -1212,6 +1269,8 @@ def main() -> None:
     render_national_pension(profile)
     st.divider()
     render_prescriptions(profile)
+    st.divider()
+    render_working_income(profile)
     st.divider()
     render_sensitivity(profile)
     st.divider()

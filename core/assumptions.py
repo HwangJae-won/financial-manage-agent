@@ -87,6 +87,56 @@ class PensionAssumption(BaseModel):
     max_adjust_years: int = Field(default=5, ge=0)
 
 
+class EarnedIncomeBand(BaseModel):
+    over: int
+    base: int
+    rate: float
+
+
+class EarnedIncomeAssumption(BaseModel):
+    """소득활동에 따른 노령연금액 감액 (국민연금법 제63조의2).
+
+    기본값을 둔 이유는 다른 항목과 같다 — 이 블록이 없는 예전 YAML 도 읽혀야 한다.
+    """
+
+    a_value: int = Field(default=3_193_511, gt=0)
+    exempt_threshold: int = Field(default=2_000_000, ge=0)
+    bands: list[EarnedIncomeBand] = Field(default_factory=list)
+    max_reduction_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
+    start_age: int = Field(default=60, ge=0)
+    end_age: int = Field(default=65, ge=0)
+
+    def reduction(self, monthly_income: int, pension_monthly: int) -> int:
+        """월 소득에 대한 노령연금 감액분.
+
+        **깎이기 시작하는 지점이 생각보다 높다.** 소득월액이 A값을 200만원 넘게
+        초과해야 한다. 그 아래는 한 푼도 깎이지 않는다 — 2025.12.16 개정으로
+        1·2호가 삭제되면서 생긴 구간이다.
+        """
+        if monthly_income <= 0 or pension_monthly <= 0:
+            return 0
+
+        excess = monthly_income - self.a_value
+        if excess < self.exempt_threshold:
+            return 0
+
+        applicable = [b for b in self.bands if excess >= b.over]
+        if not applicable:
+            return 0
+        band = max(applicable, key=lambda b: b.over)
+        cut = band.base + (excess - band.over) * band.rate
+
+        # 아무리 많이 벌어도 연금의 절반 넘게는 깎이지 않는다.
+        return int(round(min(cut, pension_monthly * self.max_reduction_ratio)))
+
+    def free_income_ceiling(self) -> int:
+        """여기까지는 한 푼도 안 깎인다 — 화면에서 가장 먼저 말할 숫자."""
+        return self.a_value + self.exempt_threshold
+
+    def applies_at(self, age: int) -> bool:
+        return self.start_age <= age < self.end_age
+
+
 class NationalPensionAssumption(BaseModel):
     """국민연금 임의계속가입·추납 — '얼마나 쌓았나'의 레버.
 
@@ -103,6 +153,9 @@ class NationalPensionAssumption(BaseModel):
     accrual_per_year: float = Field(default=0.05, ge=0.0)
     income_base_max: int = Field(default=6_170_000, gt=0)
     income_base_min: int = Field(default=390_000, gt=0)
+    earned_income: EarnedIncomeAssumption = Field(
+        default_factory=EarnedIncomeAssumption
+    )
 
     def period_factor(self, months: int) -> float:
         """가입월수에 대한 기본연금액 계수 (국민연금법 별표 1).

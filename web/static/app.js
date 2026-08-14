@@ -403,6 +403,7 @@ function renderAnalysis(data) {
   loadNationalPension();
   loadFamilyReport();
   loadPrescriptions();
+  loadWorkingIncome();
   loadSensitivity();
 }
 
@@ -1013,6 +1014,96 @@ function renderNationalPension(report) {
   box.appendChild(el("div", "advice", `이렇게 하세요 — ${report.verdict}`));
   const notes = el("ul", "hint");
   report.notes.forEach((note) => notes.appendChild(el("li", null, clean(note))));
+  box.appendChild(notes);
+}
+
+/* ------------------------------------------------------------------ */
+/* 퇴직하고 일하면 얼마나 남을까                                          */
+/* ------------------------------------------------------------------ */
+
+async function loadWorkingIncome() {
+  const box = $("#working-income");
+  const profile = state.analysis?.profile;
+  if (!profile) return;
+  try {
+    renderWorkingIncome(
+      await api("/api/working-income", {
+        method: "POST",
+        body: JSON.stringify({ profile }),
+      }),
+    );
+  } catch (err) {
+    box.textContent = err.message;
+  }
+}
+
+function renderWorkingIncome(report) {
+  const box = $("#working-income");
+  box.innerHTML = "";
+  const clean = (t) => (t || "").replace(/\*\*/g, "");
+
+  box.appendChild(
+    el("div", `alert ${report.reduction_applies ? "alert-ok" : "alert-ok"}`, clean(report.headline)),
+  );
+
+  const grid = el("div", "stat-grid");
+  [
+    ["연금이 안 깎이는 상한", report.free_ceiling_label, "여기까지는 한 푼도 안 깎입니다"],
+    ["기준 (A값)", report.a_value_label, "전체 가입자 평균소득월액 · 매년 1월 고시"],
+    [
+      "감액 구간",
+      report.reduction_applies ? report.reduction_window : "해당 없음",
+      report.reduction_applies ? "이 나이대에만 적용됩니다" : "이 나이에는 깎이지 않습니다",
+    ],
+  ].forEach(([label, value, note]) => {
+    const card = el("div", "stat");
+    card.appendChild(el("div", "stat-label", label));
+    card.appendChild(el("div", "stat-value", value));
+    card.appendChild(el("div", "stat-note", note));
+    grid.appendChild(card);
+  });
+  box.appendChild(grid);
+
+  const table = el("table");
+  const thead = el("thead");
+  const header = el("tr");
+  ["월 소득", "연금 감액", "건강보험료", "손에 남는 것", "비율", "자산 고갈"].forEach((t) =>
+    header.appendChild(el("th", null, t)),
+  );
+  thead.appendChild(header);
+  table.appendChild(thead);
+  const tbody = el("tbody");
+  report.outcomes.forEach((o) => {
+    const row = el("tr");
+    [
+      o.monthly_income_label,
+      o.pension_cut_label,
+      o.health_premium_label,
+      o.net_label,
+      o.keep_rate_label,
+      o.depletion_label,
+    ].forEach((v) => row.appendChild(el("td", null, v)));
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+  box.appendChild(table);
+
+  // 우리 자신의 권고를 같은 잣대로 다시 잰 결과. 숨기지 않는다.
+  if (report.gap > 0) {
+    box.appendChild(
+      el(
+        "div",
+        "alert alert-warn",
+        `위 '그래서 무엇을 하면 되나'는 월 ${report.prescribed_income_label}이면 된다고 ` +
+          `말합니다. 그것은 건강보험료를 근사로 잡은 값이고, 제도대로 계산하면 ` +
+          `${report.actual_needed_income_label}이 필요합니다 (${report.gap_label} 차이).`,
+      ),
+    );
+  }
+
+  box.appendChild(el("div", "advice", `이렇게 하세요 — ${clean(report.verdict)}`));
+  const notes = el("ul", "hint");
+  report.notes.forEach((n) => notes.appendChild(el("li", null, clean(n))));
   box.appendChild(notes);
 }
 
