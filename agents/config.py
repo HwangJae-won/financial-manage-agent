@@ -31,7 +31,16 @@ class Provider(str, Enum):
 
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    LOCAL = "local"
     MOCK = "mock"
+
+
+# 로컬 서버(vLLM 등)의 기본 주소. OpenAI 호환 API 를 그대로 쓰므로 클라이언트는
+# 새로 만들지 않고 base_url 만 갈아 끼운다.
+DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:8001/v1"
+
+# 로컬 서버는 키를 검사하지 않지만 OpenAI SDK 가 값을 요구한다.
+LOCAL_PLACEHOLDER_KEY = "EMPTY"
 
 
 def load_env(path: Path = ENV_PATH, *, override: bool = False) -> dict[str, str]:
@@ -75,8 +84,15 @@ def _placeholder(value: Optional[str]) -> bool:
 
 
 def api_key(provider: Provider) -> Optional[str]:
-    """프로바이더의 API 키. 없거나 자리표시자면 None."""
+    """프로바이더의 API 키. 없거나 자리표시자면 None.
+
+    로컬 서버는 키가 필요 없지만 OpenAI SDK 가 빈 값을 거부하므로 자리표시자를
+    돌려준다. 이 값은 네트워크를 나가지 않는다.
+    """
     load_env()
+    if provider is Provider.LOCAL:
+        return os.environ.get("LOCAL_API_KEY") or LOCAL_PLACEHOLDER_KEY
+
     env_name = {
         Provider.ANTHROPIC: "ANTHROPIC_API_KEY",
         Provider.OPENAI: "OPENAI_API_KEY",
@@ -86,6 +102,12 @@ def api_key(provider: Provider) -> Optional[str]:
         return None
     value = os.environ.get(env_name)
     return None if _placeholder(value) else value
+
+
+def local_base_url() -> str:
+    """로컬 OpenAI 호환 서버 주소."""
+    load_env()
+    return os.environ.get("LOCAL_BASE_URL") or DEFAULT_LOCAL_BASE_URL
 
 
 def resolve_provider() -> Provider:
@@ -120,6 +142,15 @@ def model_name(provider: Provider) -> str:
     load_env()
     if provider is Provider.ANTHROPIC:
         return os.environ.get("ANTHROPIC_MODEL") or DEFAULT_ANTHROPIC_MODEL
+    if provider is Provider.LOCAL:
+        model = os.environ.get("LOCAL_MODEL")
+        if not model:
+            raise ValueError(
+                "local 프로바이더를 쓰려면 .env 에 LOCAL_MODEL 을 지정해야 합니다. "
+                "서버가 올린 것과 같은 이름이어야 합니다 — "
+                "`curl $LOCAL_BASE_URL/models` 로 확인하세요."
+            )
+        return model
     if provider is Provider.OPENAI:
         model = os.environ.get("OPENAI_MODEL")
         if not model:
@@ -137,4 +168,12 @@ def describe() -> str:
     provider = resolve_provider()
     if provider is Provider.MOCK:
         return "LLM: mock (API 키 없음 — 정해진 응답으로 동작합니다)"
+    if provider is Provider.LOCAL:
+        # 모델 이름이 없으면 예외 대신 그 사실을 문구로 낸다. 이 함수는 화면
+        # 상단에 쓰이므로 여기서 터지면 앱 전체가 죽는다.
+        try:
+            model = model_name(provider)
+        except ValueError:
+            return "LLM: local (LOCAL_MODEL 이 설정되지 않았습니다)"
+        return f"LLM: 로컬 모델 / {model} ({local_base_url()})"
     return f"LLM: {provider.value} / {model_name(provider)}"

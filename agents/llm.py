@@ -27,7 +27,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional, Protocol
 
-from agents.config import Provider, api_key, model_name, resolve_provider
+from agents.config import (
+    Provider,
+    api_key,
+    local_base_url,
+    model_name,
+    resolve_provider,
+)
 
 # 금융 계산 결과를 설명할 때 모든 프롬프트에 공통으로 붙는 제약.
 # core/ 가 만든 숫자를 LLM 이 재계산하거나 지어내지 못하게 막는 방어선이다.
@@ -350,9 +356,22 @@ class AnthropicClient:
 
 
 class OpenAIClient:
-    """OpenAI API 클라이언트."""
+    """OpenAI API 클라이언트.
 
-    def __init__(self, model: Optional[str] = None, key: Optional[str] = None):
+    **로컬 모델도 이 클래스를 쓴다.** vLLM 같은 서버가 OpenAI 호환 API 를
+    제공하므로 `base_url` 만 바꾸면 도구 호출 인코딩(`_encode`)까지 그대로
+    동작한다. 로컬용 클라이언트를 따로 만들면 이 앱에서 가장 깨지기 쉬운
+    도구 호출 파싱을 두 벌 유지하게 된다.
+    """
+
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        key: Optional[str] = None,
+        *,
+        base_url: Optional[str] = None,
+        provider: Provider = Provider.OPENAI,
+    ):
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover - 설치 환경 의존
@@ -360,9 +379,16 @@ class OpenAIClient:
                 "openai SDK 가 설치되지 않았습니다: pip install openai"
             ) from exc
 
-        self.provider = Provider.OPENAI.value
-        self.model = model or model_name(Provider.OPENAI)
-        self._client = OpenAI(api_key=key or api_key(Provider.OPENAI))
+        self.provider = provider.value
+        self.model = model or model_name(provider)
+        self._is_local = provider is Provider.LOCAL
+        self._client = OpenAI(
+            api_key=key or api_key(provider),
+            base_url=base_url or (local_base_url() if self._is_local else None),
+        )
+        # 로컬 서버가 `response_format: json_schema` 를 거부하면 한 번 겪은 뒤
+        # guided_json 으로 갈아탄다. 매 호출마다 다시 시도하지 않게 기억해 둔다.
+        self._json_schema_supported = True
 
     def complete(
         self, prompt: str, *, system: Optional[str] = None, max_tokens: int = 2000
@@ -398,16 +424,49 @@ class OpenAIClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=max_tokens,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {"name": "result", "schema": schema, "strict": True},
-            },
-        )
-        return json.loads(response.choices[0].message.content or "{}")
+        if self._json_schema_supported:
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "result",
+                            "schema": schema,
+                            "strict": True,
+                        },
+                    },
+                )
+                return json.loads(response.choices[0].message.content or "{}")
+            except Exception:
+                if not self._is_local:
+                    raise
+                # 로컬 서버가 이 형식을 안 받는다. 아래 guided_json 으로 내려간다.
+                self._json_schema_supported = False
+
+        return self._structured_guided(messages, schema, max_tokens=max_tokens)
+
+    def _structured_guided(
+        self, messages: list[dict[str, str]], schema: dict[str, Any], *, max_tokens: int
+    ) -> dict[str, Any]:
+        """vLLM 의 guided decoding 으로 스키마를 강제한다.
+
+        `response_format: json_schema` 를 안 받는 서버·버전을 위한 경로다.
+        **여기까지 실패하면 빈 dict 를 돌려준다** — 프로파일링은 "못 알아들었다"로
+        해석해 같은 질문을 다시 하고, 대화가 예외로 끊기지 않는다.
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                extra_body={"guided_json": schema},
+            )
+            return json.loads(response.choices[0].message.content or "{}")
+        except (TypeError, ValueError):
+            return {}
 
     # -- 도구 사용 -------------------------------------------------------- #
 
@@ -743,4 +802,7 @@ def get_client(provider: Optional[Provider] = None, **kwargs) -> LLMClient:
         return AnthropicClient(**kwargs)
     if provider is Provider.OPENAI:
         return OpenAIClient(**kwargs)
+    if provider is Provider.LOCAL:
+        # 로컬 서버도 OpenAI 호환이라 같은 클라이언트를 쓴다. base_url 만 다르다.
+        return OpenAIClient(provider=Provider.LOCAL, **kwargs)
     return MockClient(**kwargs)

@@ -345,3 +345,56 @@ def test_empty_turns_are_dropped():
     history = [Turn(role="user", text="질문"), Turn(role="assistant")]
     assert len(AnthropicClient._encode(history)) == 1
     assert len(OpenAIClient._encode(history)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# 로컬 프로바이더 — vLLM 등 OpenAI 호환 서버
+# --------------------------------------------------------------------------- #
+
+from agents.config import (  # noqa: E402
+    DEFAULT_LOCAL_BASE_URL,
+    LOCAL_PLACEHOLDER_KEY,
+    Provider,
+    api_key,
+    local_base_url,
+    model_name,
+)
+
+
+def test_local_is_a_known_provider():
+    assert Provider("local") is Provider.LOCAL
+
+
+def test_the_local_key_is_a_placeholder_not_a_secret():
+    """로컬 서버는 키를 검사하지 않지만 SDK 가 빈 값을 거부한다."""
+    assert api_key(Provider.LOCAL) == LOCAL_PLACEHOLDER_KEY
+
+
+def test_the_local_base_url_has_a_default(monkeypatch):
+    monkeypatch.delenv("LOCAL_BASE_URL", raising=False)
+    assert local_base_url() == DEFAULT_LOCAL_BASE_URL
+
+    monkeypatch.setenv("LOCAL_BASE_URL", "http://gpu-node:9000/v1")
+    assert local_base_url() == "http://gpu-node:9000/v1"
+
+
+def test_a_missing_local_model_says_how_to_find_it(monkeypatch):
+    """서버가 올린 이름과 달라 404 가 나면 원인이 잘 안 보인다."""
+    monkeypatch.delenv("LOCAL_MODEL", raising=False)
+
+    with pytest.raises(ValueError) as exc:
+        model_name(Provider.LOCAL)
+    assert "LOCAL_MODEL" in str(exc.value)
+    assert "/models" in str(exc.value)
+
+
+def test_describe_does_not_explode_without_a_model(monkeypatch):
+    """이 문구는 화면 상단에 쓰인다. 여기서 터지면 앱 전체가 죽는다."""
+    import agents.config as config
+
+    monkeypatch.setenv("FINAGENT_LLM_PROVIDER", "local")
+    monkeypatch.delenv("LOCAL_MODEL", raising=False)
+    config.describe.cache_clear()
+
+    assert "LOCAL_MODEL" in config.describe()
+    config.describe.cache_clear()
